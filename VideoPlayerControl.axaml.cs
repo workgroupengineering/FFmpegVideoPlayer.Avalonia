@@ -1059,10 +1059,7 @@ public partial class VideoPlayerControl : UserControl
         if (_isDraggingSeekBar)
         {
             _isDraggingSeekBar = false;
-            if (_mediaPlayer != null && _seekBar != null)
-            {
-                _mediaPlayer.Seek((float)(_seekBar.Value / 100));
-            }
+            SeekToCurrentSliderPosition();
         }
     }
 
@@ -1071,10 +1068,21 @@ public partial class VideoPlayerControl : UserControl
         if (_isDraggingSeekBar)
         {
             _isDraggingSeekBar = false;
-            if (_mediaPlayer != null && _seekBar != null)
-            {
-                _mediaPlayer.Seek((float)(_seekBar.Value / 100));
-            }
+            SeekToCurrentSliderPosition();
+        }
+    }
+
+    private void SeekToCurrentSliderPosition()
+    {
+        if (_mediaPlayer == null || _seekBar == null) return;
+
+        var position = (float)(_seekBar.Value / 100);
+        _mediaPlayer.Seek(position);
+
+        // If paused or stopped, decode and show the frame at the new position
+        if (!_mediaPlayer.IsPlaying)
+        {
+            _mediaPlayer.ShowFrameAtCurrentPosition();
         }
     }
 

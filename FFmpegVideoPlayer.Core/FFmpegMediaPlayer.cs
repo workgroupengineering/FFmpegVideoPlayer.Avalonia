@@ -884,6 +884,23 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
     /// Steps forward exactly one frame. Pauses playback after displaying the frame.
     /// </summary>
     /// <returns>True if a frame was successfully decoded and displayed, false otherwise.</returns>
+    /// <summary>
+    /// Decodes and displays one frame at the current position without affecting playback state.
+    /// Use after Seek() while paused to show the frame at the new position.
+    /// </summary>
+    public bool ShowFrameAtCurrentPosition()
+    {
+        lock (_lock)
+        {
+            if (_formatContext == null || _videoCodecContext == null || _packet == null)
+                return false;
+            if (_isPlaying)
+                return false;
+
+            return DecodeSingleFrame();
+        }
+    }
+
     public bool StepForward()
     {
         lock (_lock)

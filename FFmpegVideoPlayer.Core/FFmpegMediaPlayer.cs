@@ -1289,24 +1289,38 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
 
                 try
                 {
-                    lock (_lock)
+                    // Process packets outside the lock to avoid deadlock with UI thread
+                    // (synchronizationCallback posts to UI which may try to acquire _lock)
+                    if (streamIndex == _audioStreamIndex)
                     {
-                        // Always process audio packets immediately (no blocking)
-                        if (streamIndex == _audioStreamIndex && _audioCodecContext != null)
+                        lock (_lock)
                         {
-                            ProcessAudioPacket(stopwatch, firstFramePts, ref lastAudioPts);
-                            audioPacketsProcessed++;
+                            if (_audioCodecContext != null)
+                            {
+                                ProcessAudioPacket(stopwatch, firstFramePts, ref lastAudioPts);
+                                audioPacketsProcessed++;
+                            }
                         }
-                        else if (streamIndex == _videoStreamIndex && _videoCodecContext != null)
+                    }
+                    else if (streamIndex == _videoStreamIndex)
+                    {
+                        lock (_lock)
                         {
-                            ProcessVideoPacket(stopwatch, ref firstFramePts, ref lastVideoPts);
-                            videoPacketsProcessed++;
+                            if (_videoCodecContext != null)
+                            {
+                                ProcessVideoPacket(stopwatch, ref firstFramePts, ref lastVideoPts);
+                                videoPacketsProcessed++;
+                            }
                         }
                     }
                 }
                 finally
                 {
-                    ffmpeg.av_packet_unref(_packet);
+                    lock (_lock)
+                    {
+                        if (_packet != null)
+                            ffmpeg.av_packet_unref(_packet);
+                    }
                 }
                 
                 packetsThisIteration++;
@@ -1406,9 +1420,25 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                         FrameDelay = frameDelay
                     });
                 }
-                else
+                else if (frameDelay > 0 && frameDelay < 1.0)
                 {
-                    // Let FFmpeg handle synchronization - just process frames as they come
+                    // Wait for the right time to display this frame
+                    var elapsedWall = stopwatch.Elapsed.TotalSeconds - _playbackStartWallTime - _totalPauseTime;
+                    var mediaElapsed = frameTime - _startTime;
+                    var sleepTime = mediaElapsed - elapsedWall;
+                    if (sleepTime > 0.002 && sleepTime < 1.0)
+                    {
+                        // Release lock during sleep to prevent deadlock with UI thread
+                        Monitor.Exit(_lock);
+                        try
+                        {
+                            Thread.Sleep((int)(sleepTime * 1000));
+                        }
+                        finally
+                        {
+                            Monitor.Enter(_lock);
+                        }
+                    }
                 }
 
                 lastVideoPts = frameTime;

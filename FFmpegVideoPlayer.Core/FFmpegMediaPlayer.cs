@@ -1284,8 +1284,6 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
 
                 try
                 {
-                    // Process packets outside the lock to avoid deadlock with UI thread
-                    // (synchronizationCallback posts to UI which may try to acquire _lock)
                     if (streamIndex == _audioStreamIndex)
                     {
                         lock (_lock)
@@ -1299,13 +1297,12 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                     }
                     else if (streamIndex == _videoStreamIndex)
                     {
-                        lock (_lock)
+                        // ProcessVideoPacket manages its own locking:
+                        // holds lock for decode/convert, releases for UI callbacks
+                        if (_videoCodecContext != null)
                         {
-                            if (_videoCodecContext != null)
-                            {
-                                ProcessVideoPacket(stopwatch, ref firstFramePts, ref lastVideoPts);
-                                videoPacketsProcessed++;
-                            }
+                            ProcessVideoPacket(stopwatch, ref firstFramePts, ref lastVideoPts);
+                            videoPacketsProcessed++;
                         }
                     }
                 }
@@ -1370,112 +1367,126 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
     /// </summary>
     private void ProcessVideoPacket(Stopwatch stopwatch, ref double firstFramePts, ref double lastVideoPts)
     {
-        var sendResult = ffmpeg.avcodec_send_packet(_videoCodecContext, _packet);
-        if (sendResult < 0)
-            return;
-
-        while (ffmpeg.avcodec_receive_frame(_videoCodecContext, _frame) >= 0)
+        lock (_lock)
         {
-            // === PHASE 1: Decode and convert (inside lock, held by caller) ===
-            var pts = _frame->pts != ffmpeg.AV_NOPTS_VALUE ? _frame->pts : _frame->best_effort_timestamp;
-            if (pts == ffmpeg.AV_NOPTS_VALUE)
-                continue;
+            var sendResult = ffmpeg.avcodec_send_packet(_videoCodecContext, _packet);
+            if (sendResult < 0)
+                return;
+        }
 
-            var frameTime = pts * _videoTimeBase.num / (double)_videoTimeBase.den;
+        while (true)
+        {
+            // === PHASE 1: Decode and convert inside lock ===
+            double frameTime;
+            float positionSnapshot;
+            FrameEventArgs? eventArgs = null;
+            bool shouldSleep = false;
+            int sleepMs = 0;
 
-            // Frame timing
-            if (firstFramePts == 0)
+            lock (_lock)
             {
-                firstFramePts = frameTime;
-                lastVideoPts = frameTime;
-                _startTime = frameTime;
-                _playbackStartWallTime = stopwatch.Elapsed.TotalSeconds;
-                _videoClock = frameTime;
-                _audioClock = frameTime;
-                _logger.Log("FFmpegMediaPlayer", "FirstVideoFrame", new { FrameTime = frameTime, PTS = pts });
-            }
-            else
-            {
-                var frameDelay = frameTime - lastVideoPts;
+                if (ffmpeg.avcodec_receive_frame(_videoCodecContext, _frame) < 0)
+                    break;
 
-                if (Math.Abs(frameDelay) > 1.0)
+                var pts = _frame->pts != ffmpeg.AV_NOPTS_VALUE ? _frame->pts : _frame->best_effort_timestamp;
+                if (pts == ffmpeg.AV_NOPTS_VALUE)
+                    continue;
+
+                frameTime = pts * _videoTimeBase.num / (double)_videoTimeBase.den;
+
+                // Frame timing
+                if (firstFramePts == 0)
                 {
                     firstFramePts = frameTime;
                     lastVideoPts = frameTime;
                     _startTime = frameTime;
                     _playbackStartWallTime = stopwatch.Elapsed.TotalSeconds;
+                    _videoClock = frameTime;
+                    _audioClock = frameTime;
+                    _logger.Log("FFmpegMediaPlayer", "FirstVideoFrame", new { FrameTime = frameTime, PTS = pts });
                 }
-                else if (frameDelay > 0.002)
+                else
                 {
-                    // Calculate how long to sleep to match media timing
-                    var elapsedWall = stopwatch.Elapsed.TotalSeconds - _playbackStartWallTime - _totalPauseTime;
-                    var mediaElapsed = frameTime - _startTime;
-                    var sleepMs = (int)((mediaElapsed - elapsedWall) * 1000);
-                    if (sleepMs > 1 && sleepMs < 1000)
+                    var frameDelay = frameTime - lastVideoPts;
+
+                    if (Math.Abs(frameDelay) > 1.0)
                     {
-                        // Release lock during sleep to let UI thread access player
-                        Monitor.Exit(_lock);
-                        try { Thread.Sleep(sleepMs); }
-                        finally { Monitor.Enter(_lock); }
+                        firstFramePts = frameTime;
+                        lastVideoPts = frameTime;
+                        _startTime = frameTime;
+                        _playbackStartWallTime = stopwatch.Elapsed.TotalSeconds;
                     }
+                    else if (frameDelay > 0.002)
+                    {
+                        var elapsedWall = stopwatch.Elapsed.TotalSeconds - _playbackStartWallTime - _totalPauseTime;
+                        var mediaElapsed = frameTime - _startTime;
+                        sleepMs = (int)((mediaElapsed - elapsedWall) * 1000);
+                        shouldSleep = sleepMs > 1 && sleepMs < 1000;
+                    }
+                    lastVideoPts = frameTime;
                 }
-                lastVideoPts = frameTime;
-            }
 
-            // Convert to BGRA
-            ffmpeg.sws_scale(_swsContext,
-                _frame->data, _frame->linesize, 0, _videoHeight,
-                _rgbFrame->data, _rgbFrame->linesize);
+                // Convert to BGRA
+                ffmpeg.sws_scale(_swsContext,
+                    _frame->data, _frame->linesize, 0, _videoHeight,
+                    _rgbFrame->data, _rgbFrame->linesize);
 
-            _videoClock = frameTime;
-            _position = frameTime;
-            _lastFramePts = frameTime;
+                _videoClock = frameTime;
+                _position = frameTime;
+                _lastFramePts = frameTime;
 
-            if (_stepMode)
+                if (_stepMode)
+                {
+                    _isPaused = true;
+                    _audioPlayer?.Pause();
+                }
+
+                // Check pending frames
+                var pendingFrames = Interlocked.Increment(ref _pendingFrameCount);
+                if (pendingFrames > MaxPendingFrames)
+                {
+                    Interlocked.Decrement(ref _pendingFrameCount);
+                    Interlocked.Increment(ref _droppedFrames);
+                    continue;
+                }
+
+                // Copy frame buffer while holding lock (accessing native _rgbFrame)
+                var stride = _rgbFrame->linesize[0];
+                var width = _videoWidth;
+                var height = _videoHeight;
+                var bufferSize = _rgbBufferSize;
+                positionSnapshot = Position;
+
+                byte[]? frameBuffer = null;
+                try
+                {
+                    frameBuffer = ArrayPool<byte>.Shared.Rent(bufferSize);
+                    Marshal.Copy((IntPtr)_rgbFrame->data[0], frameBuffer, 0, bufferSize);
+                }
+                catch
+                {
+                    if (frameBuffer != null) ArrayPool<byte>.Shared.Return(frameBuffer);
+                    Interlocked.Decrement(ref _pendingFrameCount);
+                    continue;
+                }
+
+                CacheFrame(frameBuffer, width, height, stride, bufferSize, frameTime);
+
+                eventArgs = new FrameEventArgs(
+                    frameBuffer, width, height, stride, bufferSize,
+                    pooled: true,
+                    releaseAction: buffer => ArrayPool<byte>.Shared.Return(buffer));
+
+            } // === lock released here ===
+
+            // Sleep OUTSIDE lock for frame timing
+            if (shouldSleep)
             {
-                _isPaused = true;
-                _audioPlayer?.Pause();
+                Thread.Sleep(sleepMs);
             }
 
-            // Check pending frames before copying buffer
-            var pendingFrames = Interlocked.Increment(ref _pendingFrameCount);
-            if (pendingFrames > MaxPendingFrames)
-            {
-                Interlocked.Decrement(ref _pendingFrameCount);
-                Interlocked.Increment(ref _droppedFrames);
-                continue;
-            }
-
-            // Copy frame data while we still hold the lock (accessing _rgbFrame)
-            var stride = _rgbFrame->linesize[0];
-            var width = _videoWidth;
-            var height = _videoHeight;
-            var bufferSize = _rgbBufferSize;
-            var positionSnapshot = Position;
-
-            byte[]? frameBuffer = null;
-            try
-            {
-                frameBuffer = ArrayPool<byte>.Shared.Rent(bufferSize);
-                Marshal.Copy((IntPtr)_rgbFrame->data[0], frameBuffer, 0, bufferSize);
-            }
-            catch
-            {
-                if (frameBuffer != null) ArrayPool<byte>.Shared.Return(frameBuffer);
-                Interlocked.Decrement(ref _pendingFrameCount);
-                continue;
-            }
-
-            CacheFrame(frameBuffer, width, height, stride, bufferSize, frameTime);
-
-            var eventArgs = new FrameEventArgs(
-                frameBuffer, width, height, stride, bufferSize,
-                pooled: true,
-                releaseAction: buffer => ArrayPool<byte>.Shared.Return(buffer));
-
-            // === PHASE 2: Post callbacks OUTSIDE lock to prevent deadlock ===
-            Monitor.Exit(_lock);
-            try
+            // === PHASE 2: Post callbacks OUTSIDE lock ===
+            if (eventArgs != null)
             {
                 if (_synchronizationCallback != null)
                 {
@@ -1492,10 +1503,6 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                     try { FrameReady?.Invoke(this, eventArgs); }
                     finally { Interlocked.Decrement(ref _pendingFrameCount); }
                 }
-            }
-            finally
-            {
-                Monitor.Enter(_lock);
             }
         }
     }

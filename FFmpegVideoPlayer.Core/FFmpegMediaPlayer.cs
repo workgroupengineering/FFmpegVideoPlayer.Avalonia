@@ -1395,6 +1395,14 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
 
                 frameTime = pts * _videoTimeBase.num / (double)_videoTimeBase.den;
 
+                // After seek, reset timing so next frame re-initializes
+                if (_needsResync)
+                {
+                    _needsResync = false;
+                    firstFramePts = 0;
+                    _logger.Log("FFmpegMediaPlayer", "Resync", new { FrameTime = frameTime });
+                }
+
                 // Frame timing
                 if (firstFramePts == 0)
                 {

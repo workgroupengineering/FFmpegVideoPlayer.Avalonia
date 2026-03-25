@@ -1277,13 +1277,8 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
 
                 if (readResult < 0)
                 {
-                    // End of file or error
                     endOfFile = true;
-                    _logger.Log("FFmpegMediaPlayer", "PlaybackLoopEnded", new { ReadResult = readResult });
-                    if (_synchronizationCallback != null)
-                        _synchronizationCallback(() => EndReached?.Invoke(this, EventArgs.Empty));
-                    else
-                        EndReached?.Invoke(this, EventArgs.Empty);
+                    _logger.Log("FFmpegMediaPlayer", "EndOfFile", new { ReadResult = readResult });
                     break;
                 }
 
@@ -1333,6 +1328,7 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
             }
         }
 
+        // Reset state inside lock
         lock (_lock)
         {
             _logger.Log("FFmpegMediaPlayer", "PlaybackLoopEnded", new
@@ -1359,34 +1355,35 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
 
             _audioPlayer?.Stop();
         }
+
+        // Fire EndReached OUTSIDE lock to prevent deadlock with UI thread
+        if (_synchronizationCallback != null)
+            _synchronizationCallback(() => EndReached?.Invoke(this, EventArgs.Empty));
+        else
+            EndReached?.Invoke(this, EventArgs.Empty);
     }
 
+    /// <summary>
+    /// Processes a video packet: decodes frame inside lock, posts callbacks outside lock.
+    /// This prevents deadlock where the UI thread waits on _lock while the playback thread
+    /// waits for the dispatcher queue (which the UI thread must drain).
+    /// </summary>
     private void ProcessVideoPacket(Stopwatch stopwatch, ref double firstFramePts, ref double lastVideoPts)
     {
         var sendResult = ffmpeg.avcodec_send_packet(_videoCodecContext, _packet);
         if (sendResult < 0)
-        {
             return;
-        }
 
-        int frameCount = 0;
         while (ffmpeg.avcodec_receive_frame(_videoCodecContext, _frame) >= 0)
         {
-            frameCount++;
-            
-            // Get presentation timestamp
+            // === PHASE 1: Decode and convert (inside lock, held by caller) ===
             var pts = _frame->pts != ffmpeg.AV_NOPTS_VALUE ? _frame->pts : _frame->best_effort_timestamp;
             if (pts == ffmpeg.AV_NOPTS_VALUE)
-            {
-                continue; // Skip frame without valid PTS
-            }
-            
-            // Convert PTS to seconds
+                continue;
+
             var frameTime = pts * _videoTimeBase.num / (double)_videoTimeBase.den;
-            
-            // No sync throttling - let video play naturally
-            
-            // Initialize start time on first frame
+
+            // Frame timing
             if (firstFramePts == 0)
             {
                 firstFramePts = frameTime;
@@ -1395,56 +1392,37 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                 _playbackStartWallTime = stopwatch.Elapsed.TotalSeconds;
                 _videoClock = frameTime;
                 _audioClock = frameTime;
-                _logger.Log("FFmpegMediaPlayer", "FirstVideoFrame", new
-                {
-                    FrameTime = frameTime,
-                    PTS = pts
-                });
+                _logger.Log("FFmpegMediaPlayer", "FirstVideoFrame", new { FrameTime = frameTime, PTS = pts });
             }
             else
             {
-                // Calculate time difference between this frame and the last one
                 var frameDelay = frameTime - lastVideoPts;
-                
-                // If there's a large jump (e.g., after seek), reset timing
-                if (Math.Abs(frameDelay) > 1.0) // More than 1 second jump
+
+                if (Math.Abs(frameDelay) > 1.0)
                 {
-                    // Reset to handle seek or large gap
                     firstFramePts = frameTime;
                     lastVideoPts = frameTime;
                     _startTime = frameTime;
                     _playbackStartWallTime = stopwatch.Elapsed.TotalSeconds;
-                    _logger.Log("FFmpegMediaPlayer", "VideoSeekReset", new 
-                    { 
-                        FrameTime = frameTime,
-                        FrameDelay = frameDelay
-                    });
                 }
-                else if (frameDelay > 0 && frameDelay < 1.0)
+                else if (frameDelay > 0.002)
                 {
-                    // Wait for the right time to display this frame
+                    // Calculate how long to sleep to match media timing
                     var elapsedWall = stopwatch.Elapsed.TotalSeconds - _playbackStartWallTime - _totalPauseTime;
                     var mediaElapsed = frameTime - _startTime;
-                    var sleepTime = mediaElapsed - elapsedWall;
-                    if (sleepTime > 0.002 && sleepTime < 1.0)
+                    var sleepMs = (int)((mediaElapsed - elapsedWall) * 1000);
+                    if (sleepMs > 1 && sleepMs < 1000)
                     {
-                        // Release lock during sleep to prevent deadlock with UI thread
+                        // Release lock during sleep to let UI thread access player
                         Monitor.Exit(_lock);
-                        try
-                        {
-                            Thread.Sleep((int)(sleepTime * 1000));
-                        }
-                        finally
-                        {
-                            Monitor.Enter(_lock);
-                        }
+                        try { Thread.Sleep(sleepMs); }
+                        finally { Monitor.Enter(_lock); }
                     }
                 }
-
                 lastVideoPts = frameTime;
             }
 
-            // Convert to BGRA and render immediately
+            // Convert to BGRA
             ffmpeg.sws_scale(_swsContext,
                 _frame->data, _frame->linesize, 0, _videoHeight,
                 _rgbFrame->data, _rgbFrame->linesize);
@@ -1453,94 +1431,71 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
             _position = frameTime;
             _lastFramePts = frameTime;
 
-            // If in step mode, pause after displaying this frame
             if (_stepMode)
             {
                 _isPaused = true;
                 _audioPlayer?.Pause();
             }
 
-            if (_synchronizationCallback != null)
-                _synchronizationCallback(() => PositionChanged?.Invoke(this, new PositionChangedEventArgs(Position)));
-            else
-                PositionChanged?.Invoke(this, new PositionChangedEventArgs(Position));
-
-            // Notify frame ready with pooled buffer and bounded queue to prevent UI overload
+            // Check pending frames before copying buffer
             var pendingFrames = Interlocked.Increment(ref _pendingFrameCount);
             if (pendingFrames > MaxPendingFrames)
             {
                 Interlocked.Decrement(ref _pendingFrameCount);
-                var drops = Interlocked.Increment(ref _droppedFrames);
-                if (drops <= 5 || drops % 60 == 0)
-                {
-                    Debug.WriteLine("[FFmpegMediaPlayer] Dropping video frame to keep UI responsive.");
-                }
+                Interlocked.Increment(ref _droppedFrames);
                 continue;
             }
 
+            // Copy frame data while we still hold the lock (accessing _rgbFrame)
             var stride = _rgbFrame->linesize[0];
             var width = _videoWidth;
             var height = _videoHeight;
             var bufferSize = _rgbBufferSize;
+            var positionSnapshot = Position;
 
-            byte[] frameBuffer;
+            byte[]? frameBuffer = null;
             try
             {
                 frameBuffer = ArrayPool<byte>.Shared.Rent(bufferSize);
-            }
-            catch (Exception ex)
-            {
-                Interlocked.Decrement(ref _pendingFrameCount);
-                Debug.WriteLine($"[FFmpegMediaPlayer] Unable to rent frame buffer of {bufferSize} bytes: {ex.Message}");
-                continue;
-            }
-
-            try
-            {
                 Marshal.Copy((IntPtr)_rgbFrame->data[0], frameBuffer, 0, bufferSize);
             }
-            catch (Exception ex)
+            catch
             {
-                ArrayPool<byte>.Shared.Return(frameBuffer);
+                if (frameBuffer != null) ArrayPool<byte>.Shared.Return(frameBuffer);
                 Interlocked.Decrement(ref _pendingFrameCount);
-                Debug.WriteLine($"[FFmpegMediaPlayer] Failed to copy frame data: {ex.Message}");
                 continue;
             }
 
-            // Cache frame for backward stepping
             CacheFrame(frameBuffer, width, height, stride, bufferSize, frameTime);
 
             var eventArgs = new FrameEventArgs(
-                frameBuffer,
-                width,
-                height,
-                stride,
-                bufferSize,
+                frameBuffer, width, height, stride, bufferSize,
                 pooled: true,
                 releaseAction: buffer => ArrayPool<byte>.Shared.Return(buffer));
 
-            if (_synchronizationCallback != null)
-                _synchronizationCallback(() =>
-                {
-                    try
-                    {
-                        FrameReady?.Invoke(this, eventArgs);
-                    }
-                    finally
-                    {
-                        Interlocked.Decrement(ref _pendingFrameCount);
-                    }
-                });
-            else
+            // === PHASE 2: Post callbacks OUTSIDE lock to prevent deadlock ===
+            Monitor.Exit(_lock);
+            try
             {
-                try
+                if (_synchronizationCallback != null)
                 {
-                    FrameReady?.Invoke(this, eventArgs);
+                    _synchronizationCallback(() => PositionChanged?.Invoke(this, new PositionChangedEventArgs(positionSnapshot)));
+                    _synchronizationCallback(() =>
+                    {
+                        try { FrameReady?.Invoke(this, eventArgs); }
+                        finally { Interlocked.Decrement(ref _pendingFrameCount); }
+                    });
                 }
-                finally
+                else
                 {
-                    Interlocked.Decrement(ref _pendingFrameCount);
+                    PositionChanged?.Invoke(this, new PositionChangedEventArgs(positionSnapshot));
+                    try { FrameReady?.Invoke(this, eventArgs); }
+                    finally { Interlocked.Decrement(ref _pendingFrameCount); }
                 }
+            }
+            finally
+            {
+                Monitor.Enter(_lock);
             }
         }
     }

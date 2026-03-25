@@ -1008,9 +1008,13 @@ public partial class VideoPlayerControl : UserControl
         Dispatcher.UIThread.Post(() =>
         {
             UpdatePlayPauseButton(false);
+
+            // Set seek bar to end and show total time
+            if (_seekBar != null) _seekBar.Value = 100;
+            if (_currentTimeText != null && _totalTimeText != null)
+                _currentTimeText.Text = _totalTimeText.Text;
+
             MediaEnded?.Invoke(this, EventArgs.Empty);
-            // Clear the renderer to show background when playback ends
-            _videoRenderer?.Clear();
         });
     }
 

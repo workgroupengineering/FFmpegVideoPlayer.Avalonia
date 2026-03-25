@@ -1237,7 +1237,9 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
         
         _logger.Log("FFmpegMediaPlayer", "PlaybackLoopStarted", null);
 
-        while (!token.IsCancellationRequested)
+        bool endOfFile = false;
+
+        while (!token.IsCancellationRequested && !endOfFile)
         {
             if (_isPaused)
             {
@@ -1258,8 +1260,7 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                 }
             }
 
-            // Process packets - prioritize audio to prevent starvation
-            bool endOfFile = false;
+            // Process packets
             int packetsThisIteration = 0;
             const int maxPacketsPerIteration = 15;
             

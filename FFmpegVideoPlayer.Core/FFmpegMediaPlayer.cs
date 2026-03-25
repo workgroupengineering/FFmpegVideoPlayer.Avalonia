@@ -894,9 +894,11 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
         {
             if (_formatContext == null || _videoCodecContext == null || _packet == null)
                 return false;
-            if (_isPlaying)
+            // Allow when paused (_isPlaying=true, _isPaused=true) or stopped (_isPlaying=false)
+            if (_isPlaying && !_isPaused)
                 return false;
 
+            _logger.Log("FFmpegMediaPlayer", "ShowFrameAtCurrentPosition", new { Position = _position, IsPaused = _isPaused, IsPlaying = _isPlaying });
             return DecodeSingleFrame();
         }
     }
@@ -1000,29 +1002,31 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
         if (_formatContext == null || _videoCodecContext == null || _packet == null)
             return false;
 
-        // Read a packet
-        var readResult = ffmpeg.av_read_frame(_formatContext, _packet);
-        if (readResult < 0)
-            return false;
-
-        // Process video packet
-        if (_packet->stream_index == _videoStreamIndex)
+        // Read packets until we find a video frame (skip audio packets)
+        const int maxAttempts = 200;
+        for (int i = 0; i < maxAttempts; i++)
         {
-            var sendResult = ffmpeg.avcodec_send_packet(_videoCodecContext, _packet);
-            if (sendResult >= 0)
+            var readResult = ffmpeg.av_read_frame(_formatContext, _packet);
+            if (readResult < 0)
+                return false;
+
+            if (_packet->stream_index == _videoStreamIndex)
             {
-                // Receive frame
-                if (ffmpeg.avcodec_receive_frame(_videoCodecContext, _frame) >= 0)
+                var sendResult = ffmpeg.avcodec_send_packet(_videoCodecContext, _packet);
+                if (sendResult >= 0)
                 {
-                    // Process and display the frame
-                    ProcessSingleFrame();
-                    ffmpeg.av_packet_unref(_packet);
-                    return true;
+                    if (ffmpeg.avcodec_receive_frame(_videoCodecContext, _frame) >= 0)
+                    {
+                        ProcessSingleFrame();
+                        ffmpeg.av_packet_unref(_packet);
+                        return true;
+                    }
                 }
             }
+
+            ffmpeg.av_packet_unref(_packet);
         }
-        
-        ffmpeg.av_packet_unref(_packet);
+
         return false;
     }
     

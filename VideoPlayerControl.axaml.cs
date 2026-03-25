@@ -401,6 +401,19 @@ public partial class VideoPlayerControl : UserControl
         set => SetValue(ShowFullscreenButtonProperty, value);
     }
 
+    /// <summary>Defines the IsFullscreen property.</summary>
+    public static readonly StyledProperty<bool> IsFullscreenProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, bool>(nameof(IsFullscreen), false);
+
+    /// <summary>
+    /// Gets or sets whether the player is in fullscreen mode. Controls the fullscreen button icon.
+    /// </summary>
+    public bool IsFullscreen
+    {
+        get => GetValue(IsFullscreenProperty);
+        set => SetValue(IsFullscreenProperty, value);
+    }
+
     /// <summary>
     /// Occurs when the fullscreen button is clicked. The consuming app handles the actual resize.
     /// </summary>
@@ -608,6 +621,10 @@ public partial class VideoPlayerControl : UserControl
         {
             var btn = this.FindControl<Button>("FullscreenButton");
             if (btn != null) btn.IsVisible = (bool)(e.NewValue ?? false);
+        }
+        else if (e.Property == IsFullscreenProperty)
+        {
+            UpdateFullscreenIcon();
         }
         else if (e.Property == ControlForegroundProperty)
         {
@@ -1137,7 +1154,21 @@ public partial class VideoPlayerControl : UserControl
 
     private void OnFullscreenClick(object? sender, RoutedEventArgs e)
     {
+        IsFullscreen = !IsFullscreen;
+        UpdateFullscreenIcon();
         FullscreenToggle?.Invoke(this, EventArgs.Empty);
+    }
+
+    private void UpdateFullscreenIcon()
+    {
+        var icon = this.FindControl<Path>("FullscreenIcon");
+        if (icon != null)
+        {
+            var provider = GetIconProvider();
+            icon.Data = IsFullscreen
+                ? provider.CreateFullscreenExitIcon()
+                : provider.CreateFullscreenIcon();
+        }
     }
 
     private void UpdatePlayPauseButton(bool isPlaying)

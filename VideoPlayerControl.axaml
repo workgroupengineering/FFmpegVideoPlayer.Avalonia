@@ -84,7 +84,8 @@
 
         <!-- Controls Panel - single row: [Open] [Play] [Stop] | 00:00 [====seek====] 00:00 | [Vol] [==] -->
         <Border Name="ControlPanelBorder" Grid.Row="1" Background="White"
-                Padding="{Binding ControlPanelPadding, ElementName=Root}">
+                Padding="{Binding ControlPanelPadding, ElementName=Root}"
+                ClipToBounds="True">
             <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto">
 
                 <!-- Open File Button -->
@@ -108,7 +109,7 @@
                 </Button>
 
                 <!-- Stop Button -->
-                <Button Name="StopButton" Grid.Column="2" Margin="0,0,6,0"
+                <Button Name="StopButton" Grid.Column="2" Margin="0,0,4,0"
                         Classes="iconButton" Click="OnStopClick">
                     <Path Name="StopIcon"
                           Width="{Binding IconSize, ElementName=Root}"
@@ -131,7 +132,7 @@
                 <!-- Total Time -->
                 <TextBlock Name="TotalTimeText" Grid.Column="5"
                            Text="00:00"
-                           VerticalAlignment="Center" Margin="0,0,6,0"
+                           VerticalAlignment="Center" Margin="0,0,4,0"
                            FontSize="{Binding ControlFontSize, ElementName=Root}"/>
 
                 <!-- Volume Icon -->
@@ -146,7 +147,7 @@
 
                 <!-- Volume Slider -->
                 <Slider Name="VolumeSlider" Grid.Column="7"
-                        Width="60" Minimum="0" Maximum="100" Value="100"
+                        Width="40" Minimum="0" Maximum="100" Value="100"
                         VerticalAlignment="Center"/>
 
                 <!-- Fullscreen Toggle Button -->

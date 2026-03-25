@@ -10,7 +10,7 @@
     <PackageId>FFmpegVideoPlayer.Avalonia</PackageId>
     <AssemblyName>Avalonia.FFmpegVideoPlayer</AssemblyName>
     <RootNamespace>Avalonia.FFmpegVideoPlayer</RootNamespace>
-    <Version>2.5.6</Version>
+    <Version>2.5.7</Version>
     <Authors>jojomondag</Authors>
     <Company>jojomondag</Company>
     <Description>Self-contained FFmpeg video player for Avalonia UI. FFmpeg libraries bundled - no installation required.</Description>

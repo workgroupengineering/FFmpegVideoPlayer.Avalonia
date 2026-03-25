@@ -1145,7 +1145,7 @@ public partial class VideoPlayerControl : UserControl
 
     private void OnMuteClick(object? sender, RoutedEventArgs e)
     {
-        if (_mediaPlayer == null || _volumeSlider == null || _volumeIcon == null) return;
+        if (_mediaPlayer == null || _volumeIcon == null) return;
 
         _isMuted = !_isMuted;
 
@@ -1153,13 +1153,13 @@ public partial class VideoPlayerControl : UserControl
         {
             _previousVolume = _mediaPlayer.Volume;
             _mediaPlayer.Volume = 0;
-            _volumeSlider.Value = 0;
+            if (_volumeSlider != null) _volumeSlider.Value = 0;
             _volumeIcon.Data = GetIconProvider().CreateVolumeOffIcon();
         }
         else
         {
             _mediaPlayer.Volume = _previousVolume;
-            _volumeSlider.Value = _previousVolume;
+            if (_volumeSlider != null) _volumeSlider.Value = _previousVolume;
             _volumeIcon.Data = GetIconProvider().CreateVolumeHighIcon();
         }
     }

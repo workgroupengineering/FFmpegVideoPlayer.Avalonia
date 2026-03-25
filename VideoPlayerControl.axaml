@@ -5,7 +5,8 @@
              xmlns:local="clr-namespace:Avalonia.FFmpegVideoPlayer"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="500"
              x:Class="Avalonia.FFmpegVideoPlayer.VideoPlayerControl"
-             x:Name="Root">
+             x:Name="Root"
+             ClipToBounds="True">
 
     <UserControl.Resources>
         <PathGeometry x:Key="PlayIcon" Figures="M 6,4 L 6,16 L 18,10 Z"/>
@@ -86,7 +87,7 @@
         <Border Name="ControlPanelBorder" Grid.Row="1" Background="White"
                 Padding="{Binding ControlPanelPadding, ElementName=Root}"
                 ClipToBounds="True">
-            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
 
                 <!-- Open File Button -->
                 <Button Name="OpenButton" Grid.Column="0" Margin="0,0,2,0"
@@ -127,6 +128,7 @@
                 <!-- Seek Bar -->
                 <Slider Name="SeekBar" Grid.Column="4"
                         Minimum="0" Maximum="100" Value="0"
+                        MinWidth="0"
                         VerticalAlignment="Center" Margin="0,0,4,0"/>
 
                 <!-- Total Time -->
@@ -135,7 +137,7 @@
                            VerticalAlignment="Center" Margin="0,0,4,0"
                            FontSize="{Binding ControlFontSize, ElementName=Root}"/>
 
-                <!-- Volume Icon -->
+                <!-- Volume Icon (mute toggle) -->
                 <Button Name="VolumeButton" Grid.Column="6" Margin="0,0,2,0"
                         Classes="iconButton" Click="OnMuteClick">
                     <Path Name="VolumeIcon"
@@ -145,13 +147,8 @@
                           Data="{StaticResource VolumeHighIcon}"/>
                 </Button>
 
-                <!-- Volume Slider -->
-                <Slider Name="VolumeSlider" Grid.Column="7"
-                        Width="40" Minimum="0" Maximum="100" Value="100"
-                        VerticalAlignment="Center"/>
-
                 <!-- Fullscreen Toggle Button -->
-                <Button Name="FullscreenButton" Grid.Column="8" Margin="4,0,0,0"
+                <Button Name="FullscreenButton" Grid.Column="7" Margin="2,0,0,0"
                         Classes="iconButton" Click="OnFullscreenClick">
                     <Path Name="FullscreenIcon"
                           Width="{Binding IconSize, ElementName=Root}"

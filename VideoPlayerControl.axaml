@@ -77,15 +77,19 @@
         </Style>
     </UserControl.Styles>
 
-    <Grid RowDefinitions="*,Auto">
+    <!-- Video + controls overlay in same cell so controls match video width -->
+    <Grid>
         <!-- Video View -->
-        <Border Name="VideoBorder" Grid.Row="0" Background="{Binding VideoBackground, ElementName=Root}">
+        <Border Name="VideoBorder" Background="{Binding VideoBackground, ElementName=Root}">
             <Image Name="VideoImage" Stretch="Uniform" />
         </Border>
 
-        <!-- Controls Panel - single row: [Open] [Play] [Stop] | 00:00 [====seek====] 00:00 | [Vol] [==] -->
-        <Border Name="ControlPanelBorder" Grid.Row="1" Background="White"
+        <!-- Controls Panel - overlaid at bottom of video -->
+        <Border Name="ControlPanelBorder"
+                Background="White"
                 Padding="{Binding ControlPanelPadding, ElementName=Root}"
+                VerticalAlignment="Bottom"
+                HorizontalAlignment="Stretch"
                 ClipToBounds="True">
             <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
 
@@ -128,7 +132,7 @@
                 <!-- Seek Bar -->
                 <Slider Name="SeekBar" Grid.Column="4"
                         Minimum="0" Maximum="100" Value="0"
-                        MinWidth="0"
+                        MinWidth="20"
                         VerticalAlignment="Center" Margin="0,0,4,0"/>
 
                 <!-- Total Time -->

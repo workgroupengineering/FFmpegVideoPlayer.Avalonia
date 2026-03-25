@@ -386,6 +386,26 @@ public partial class VideoPlayerControl : UserControl
     /// </summary>
     public long Duration => _mediaPlayer?.Length ?? 0;
 
+    // ── Fullscreen support ──
+
+    /// <summary>Defines the ShowFullscreenButton property.</summary>
+    public static readonly StyledProperty<bool> ShowFullscreenButtonProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, bool>(nameof(ShowFullscreenButton), false);
+
+    /// <summary>
+    /// Gets or sets whether the fullscreen toggle button is visible. Default is false.
+    /// </summary>
+    public bool ShowFullscreenButton
+    {
+        get => GetValue(ShowFullscreenButtonProperty);
+        set => SetValue(ShowFullscreenButtonProperty, value);
+    }
+
+    /// <summary>
+    /// Occurs when the fullscreen button is clicked. The consuming app handles the actual resize.
+    /// </summary>
+    public event EventHandler? FullscreenToggle;
+
     /// <summary>
     /// Occurs when playback starts.
     /// </summary>
@@ -584,6 +604,11 @@ public partial class VideoPlayerControl : UserControl
         {
             SetupVideoRenderer();
         }
+        else if (e.Property == ShowFullscreenButtonProperty)
+        {
+            var btn = this.FindControl<Button>("FullscreenButton");
+            if (btn != null) btn.IsVisible = (bool)(e.NewValue ?? false);
+        }
         else if (e.Property == ControlForegroundProperty)
         {
             ApplyControlForeground(e.NewValue as Media.IBrush);
@@ -671,6 +696,11 @@ public partial class VideoPlayerControl : UserControl
             if (_openButton != null)
             {
                 _openButton.IsVisible = ShowOpenButton;
+            }
+            var fullscreenBtn = this.FindControl<Button>("FullscreenButton");
+            if (fullscreenBtn != null)
+            {
+                fullscreenBtn.IsVisible = ShowFullscreenButton;
             }
             if (_controlPanelBorder != null)
             {
@@ -1105,6 +1135,11 @@ public partial class VideoPlayerControl : UserControl
         }
     }
 
+    private void OnFullscreenClick(object? sender, RoutedEventArgs e)
+    {
+        FullscreenToggle?.Invoke(this, EventArgs.Empty);
+    }
+
     private void UpdatePlayPauseButton(bool isPlaying)
     {
         Dispatcher.UIThread.Post(() =>
@@ -1211,6 +1246,16 @@ public interface IIconProvider
     /// Creates a volume off icon geometry (speaker with X).
     /// </summary>
     Geometry CreateVolumeOffIcon();
+
+    /// <summary>
+    /// Creates a fullscreen icon geometry (expand arrows).
+    /// </summary>
+    Geometry CreateFullscreenIcon() => Geometry.Parse("M 5,5 L 5,10 L 7,10 L 7,7 L 10,7 L 10,5 Z M 14,5 L 14,7 L 17,7 L 17,10 L 19,10 L 19,5 Z M 7,14 L 5,14 L 5,19 L 10,19 L 10,17 L 7,17 Z M 17,17 L 14,17 L 14,19 L 19,19 L 19,14 L 17,14 Z");
+
+    /// <summary>
+    /// Creates a fullscreen exit icon geometry (collapse arrows).
+    /// </summary>
+    Geometry CreateFullscreenExitIcon() => Geometry.Parse("M 14,14 L 14,19 L 16,19 L 16,16 L 19,16 L 19,14 Z M 5,14 L 5,16 L 8,16 L 8,19 L 10,19 L 10,14 Z M 16,5 L 14,5 L 14,10 L 19,10 L 19,8 L 16,8 Z M 8,8 L 5,8 L 5,10 L 10,10 L 10,5 L 8,5 Z");
 }
 
 /// <summary>

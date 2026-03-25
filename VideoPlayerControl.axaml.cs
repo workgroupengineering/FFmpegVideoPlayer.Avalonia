@@ -41,7 +41,7 @@ public partial class VideoPlayerControl : UserControl
     private TextBlock? _currentTimeText;
     private TextBlock? _totalTimeText;
     private Path? _playPauseIcon;
-    private TextBlock? _playPauseText;
+    private TextBlock? _playPauseText; // null when using icon-only layout
     private Path? _volumeIcon;
     private bool _isDraggingSeekBar;
     private bool _isMuted;

@@ -8,7 +8,6 @@
              x:Name="Root">
 
     <UserControl.Resources>
-        <!-- Icon Geometries - Using PathGeometry with path data strings -->
         <PathGeometry x:Key="PlayIcon" Figures="M 6,4 L 6,16 L 18,10 Z"/>
         <PathGeometry x:Key="PauseIcon" Figures="M 6,4 L 10,4 L 10,16 L 6,16 Z M 14,4 L 18,4 L 18,16 L 14,16 Z"/>
         <PathGeometry x:Key="StopIcon" Figures="M 6,6 L 18,6 L 18,18 L 6,18 Z"/>
@@ -18,7 +17,33 @@
     </UserControl.Resources>
 
     <UserControl.Styles>
-        <!-- Button style for media controls - custom template to remove overlay -->
+        <!-- Icon-only button: transparent background, subtle hover -->
+        <Style Selector="Button.iconButton">
+            <Setter Property="Background" Value="Transparent"/>
+            <Setter Property="BorderThickness" Value="0"/>
+            <Setter Property="Padding" Value="{Binding ButtonPadding, ElementName=Root}"/>
+            <Setter Property="CornerRadius" Value="{Binding ButtonCornerRadius, ElementName=Root}"/>
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template">
+                <ControlTemplate>
+                    <Border Background="{TemplateBinding Background}"
+                            CornerRadius="{TemplateBinding CornerRadius}"
+                            Padding="{TemplateBinding Padding}">
+                        <ContentPresenter Content="{TemplateBinding Content}"
+                                          HorizontalAlignment="Center"
+                                          VerticalAlignment="Center"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter>
+        </Style>
+        <Style Selector="Button.iconButton:pointerover">
+            <Setter Property="Opacity" Value="0.7"/>
+        </Style>
+        <Style Selector="Button.iconButton:pressed">
+            <Setter Property="Opacity" Value="0.5"/>
+        </Style>
+
+        <!-- Legacy mediaButton style kept for backward compat -->
         <Style Selector="Button.mediaButton">
             <Setter Property="Background" Value="#e8e8e8"/>
             <Setter Property="Foreground" Value="#333333"/>
@@ -50,91 +75,77 @@
     </UserControl.Styles>
 
     <Grid RowDefinitions="*,Auto">
-        <!-- Video View - Using Image control for FFmpeg decoded frames -->
+        <!-- Video View -->
         <Border Name="VideoBorder" Grid.Row="0" Background="{Binding VideoBackground, ElementName=Root}">
             <Image Name="VideoImage" Stretch="Uniform" />
         </Border>
 
-        <!-- Controls Panel -->
+        <!-- Controls Panel - single row: [Open] [Play] [Stop] | 00:00 [====seek====] 00:00 | [Vol] [==] -->
         <Border Name="ControlPanelBorder" Grid.Row="1" Background="White"
                 Padding="{Binding ControlPanelPadding, ElementName=Root}">
-            <Grid RowDefinitions="Auto,Auto">
+            <Grid ColumnDefinitions="Auto,Auto,Auto,Auto,*,Auto,Auto,Auto">
+
+                <!-- Open File Button -->
+                <Button Name="OpenButton" Grid.Column="0" Margin="0,0,2,0"
+                        Classes="iconButton" Click="OnOpenClick">
+                    <Path Name="FolderIcon"
+                          Width="{Binding IconSize, ElementName=Root}"
+                          Height="{Binding IconSize, ElementName=Root}"
+                          Stretch="Uniform" Fill="#333333"
+                          Data="{StaticResource FolderOpenIcon}"/>
+                </Button>
+
+                <!-- Play/Pause Button -->
+                <Button Name="PlayPauseButton" Grid.Column="1" Margin="0,0,2,0"
+                        Classes="iconButton" Click="OnPlayPauseClick">
+                    <Path Name="PlayPauseIcon"
+                          Width="{Binding IconSize, ElementName=Root}"
+                          Height="{Binding IconSize, ElementName=Root}"
+                          Stretch="Uniform" Fill="#333333"
+                          Data="{StaticResource PlayIcon}"/>
+                </Button>
+
+                <!-- Stop Button -->
+                <Button Name="StopButton" Grid.Column="2" Margin="0,0,6,0"
+                        Classes="iconButton" Click="OnStopClick">
+                    <Path Name="StopIcon"
+                          Width="{Binding IconSize, ElementName=Root}"
+                          Height="{Binding IconSize, ElementName=Root}"
+                          Stretch="Uniform" Fill="#333333"
+                          Data="{StaticResource StopIcon}"/>
+                </Button>
+
+                <!-- Current Time -->
+                <TextBlock Name="CurrentTimeText" Grid.Column="3"
+                           Text="00:00"
+                           VerticalAlignment="Center" Margin="0,0,4,0"
+                           FontSize="{Binding ControlFontSize, ElementName=Root}"/>
+
                 <!-- Seek Bar -->
-                <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,4">
-                    <TextBlock Name="CurrentTimeText" Grid.Column="0"
-                               Text="00:00"
-                               VerticalAlignment="Center" Margin="0,0,6,0"
-                               FontSize="{Binding ControlFontSize, ElementName=Root}"/>
-                    <Slider Name="SeekBar" Grid.Column="1"
-                            Minimum="0" Maximum="100" Value="0"
-                            VerticalAlignment="Center"/>
-                    <TextBlock Name="TotalTimeText" Grid.Column="2"
-                               Text="00:00"
-                               VerticalAlignment="Center" Margin="6,0,0,0"
-                               FontSize="{Binding ControlFontSize, ElementName=Root}"/>
-                </Grid>
+                <Slider Name="SeekBar" Grid.Column="4"
+                        Minimum="0" Maximum="100" Value="0"
+                        VerticalAlignment="Center" Margin="0,0,4,0"/>
 
-                <!-- Playback Controls -->
-                <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto">
-                    <!-- Open File Button -->
-                    <Button Name="OpenButton" Grid.Column="0" Margin="0,0,3,0"
-                            Classes="mediaButton" Click="OnOpenClick">
-                        <StackPanel Orientation="Horizontal" Spacing="3">
-                            <Path Name="FolderIcon"
-                                  Width="{Binding IconSize, ElementName=Root}"
-                                  Height="{Binding IconSize, ElementName=Root}"
-                                  Stretch="Uniform" Fill="#333333"
-                                  Data="{StaticResource FolderOpenIcon}"/>
-                            <TextBlock Text="Open" VerticalAlignment="Center"
-                                       FontSize="{Binding ControlFontSize, ElementName=Root}"/>
-                        </StackPanel>
-                    </Button>
+                <!-- Total Time -->
+                <TextBlock Name="TotalTimeText" Grid.Column="5"
+                           Text="00:00"
+                           VerticalAlignment="Center" Margin="0,0,6,0"
+                           FontSize="{Binding ControlFontSize, ElementName=Root}"/>
 
-                    <!-- Play/Pause Button -->
-                    <Button Name="PlayPauseButton" Grid.Column="1" Margin="0,0,3,0"
-                            Classes="mediaButton" Click="OnPlayPauseClick">
-                        <StackPanel Orientation="Horizontal" Spacing="3">
-                            <Path Name="PlayPauseIcon"
-                                  Width="{Binding IconSize, ElementName=Root}"
-                                  Height="{Binding IconSize, ElementName=Root}"
-                                  Stretch="Uniform" Fill="#333333"
-                                  Data="{StaticResource PlayIcon}"/>
-                            <TextBlock Name="PlayPauseText" Text="Play" VerticalAlignment="Center"
-                                       FontSize="{Binding ControlFontSize, ElementName=Root}"/>
-                        </StackPanel>
-                    </Button>
+                <!-- Volume Icon -->
+                <Button Name="VolumeButton" Grid.Column="6" Margin="0,0,2,0"
+                        Classes="iconButton" Click="OnMuteClick">
+                    <Path Name="VolumeIcon"
+                          Width="{Binding IconSize, ElementName=Root}"
+                          Height="{Binding IconSize, ElementName=Root}"
+                          Stretch="Uniform" Fill="#333333"
+                          Data="{StaticResource VolumeHighIcon}"/>
+                </Button>
 
-                    <!-- Stop Button -->
-                    <Button Name="StopButton" Grid.Column="2" Margin="0,0,3,0"
-                            Classes="mediaButton" Click="OnStopClick">
-                        <StackPanel Orientation="Horizontal" Spacing="3">
-                            <Path Name="StopIcon"
-                                  Width="{Binding IconSize, ElementName=Root}"
-                                  Height="{Binding IconSize, ElementName=Root}"
-                                  Stretch="Uniform" Fill="#333333"
-                                  Data="{StaticResource StopIcon}"/>
-                            <TextBlock Text="Stop" VerticalAlignment="Center"
-                                       FontSize="{Binding ControlFontSize, ElementName=Root}"/>
-                        </StackPanel>
-                    </Button>
-
-                    <!-- Spacer -->
-                    <Panel Grid.Column="3"/>
-
-                    <!-- Volume Icon (clickable to toggle mute) -->
-                    <Button Name="VolumeButton" Grid.Column="4" Padding="2" Margin="0,0,3,0"
-                            Background="Transparent" BorderThickness="0" Click="OnMuteClick"
-                            VerticalAlignment="Center" Cursor="Hand">
-                        <Path Name="VolumeIcon"
-                              Width="{Binding IconSize, ElementName=Root}"
-                              Height="{Binding IconSize, ElementName=Root}"
-                              Stretch="Uniform" Fill="#333333"
-                              Data="{StaticResource VolumeHighIcon}"/>
-                    </Button>
-                    <Slider Name="VolumeSlider" Grid.Column="5"
-                            Width="80" Minimum="0" Maximum="100" Value="100"
-                            VerticalAlignment="Center"/>
-                </Grid>
+                <!-- Volume Slider -->
+                <Slider Name="VolumeSlider" Grid.Column="7"
+                        Width="60" Minimum="0" Maximum="100" Value="100"
+                        VerticalAlignment="Center"/>
             </Grid>
         </Border>
     </Grid>

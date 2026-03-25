@@ -1,17 +1,32 @@
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Runtime.InteropServices;
 using Avalonia.Controls;
 using Avalonia.Input;
 using Avalonia.Interactivity;
-using Avalonia.Media.Imaging;
+using Avalonia.Media;
 using Avalonia.Platform.Storage;
 using Avalonia.Threading;
-using Material.Icons;
-using Material.Icons.Avalonia;
+using FFmpegVideoPlayer.Core;
+using Path = Avalonia.Controls.Shapes.Path;
 
 namespace Avalonia.FFmpegVideoPlayer;
+
+/// <summary>
+/// Video rendering mode.
+/// </summary>
+public enum VideoRenderingMode
+{
+    /// <summary>
+    /// CPU-based rendering using WriteableBitmap (default, backward compatible).
+    /// </summary>
+    Cpu,
+
+    /// <summary>
+    /// Hardware-accelerated OpenGL rendering (requires OpenGL support).
+    /// </summary>
+    OpenGL
+}
 
 /// <summary>
 /// A self-contained video player control with playback controls, seek bar, and volume control.
@@ -21,14 +36,13 @@ namespace Avalonia.FFmpegVideoPlayer;
 public partial class VideoPlayerControl : UserControl
 {
     private FFmpegMediaPlayer? _mediaPlayer;
-    private Image? _videoImage;
     private Slider? _seekBar;
     private Slider? _volumeSlider;
     private TextBlock? _currentTimeText;
     private TextBlock? _totalTimeText;
-    private MaterialIcon? _playPauseIcon;
+    private Path? _playPauseIcon;
     private TextBlock? _playPauseText;
-    private MaterialIcon? _volumeIcon;
+    private Path? _volumeIcon;
     private bool _isDraggingSeekBar;
     private bool _isMuted;
     private int _previousVolume = 100;
@@ -36,7 +50,7 @@ public partial class VideoPlayerControl : UserControl
     private Border? _controlPanelBorder;
     private Border? _videoBorder;
     private Button? _openButton;
-    private WriteableBitmap? _frameBitmap;
+    private IVideoRenderer? _videoRenderer;
     private string? _currentMediaPath;
     private bool _hasMediaLoaded;
 
@@ -80,7 +94,7 @@ public partial class VideoPlayerControl : UserControl
     /// Defines the VideoBackground property.
     /// </summary>
     public static readonly StyledProperty<Media.IBrush?> VideoBackgroundProperty =
-        AvaloniaProperty.Register<VideoPlayerControl, Media.IBrush?>(nameof(VideoBackground), Media.Brushes.Black);
+        AvaloniaProperty.Register<VideoPlayerControl, Media.IBrush?>(nameof(VideoBackground), null);
 
     /// <summary>
     /// Defines the VideoStretch property.
@@ -169,8 +183,10 @@ public partial class VideoPlayerControl : UserControl
     }
 
     /// <summary>
-    /// Gets or sets the background brush for the video area.
-    /// Default is Black. Set to Transparent or any other brush to customize.
+    /// Gets or sets the background brush for the video display area.
+    /// Default is null (transparent). Set to a brush (e.g., Brushes.Black) to show a background color.
+    /// When null or Transparent, the background will be transparent, allowing the parent control's background to show through.
+    /// This is especially useful when playing videos with transparency or when no video is loaded.
     /// </summary>
     public Media.IBrush? VideoBackground
     {
@@ -196,6 +212,153 @@ public partial class VideoPlayerControl : UserControl
     {
         get => GetValue(EnableKeyboardShortcutsProperty);
         set => SetValue(EnableKeyboardShortcutsProperty, value);
+    }
+
+    /// <summary>
+    /// Defines the AudioPlayerFactory property for injecting custom audio player implementations.
+    /// If null, audio playback will be disabled (video-only mode).
+    /// </summary>
+    public static readonly StyledProperty<Func<int, int, IAudioPlayer?>?> AudioPlayerFactoryProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, Func<int, int, IAudioPlayer?>?>(nameof(AudioPlayerFactory), null);
+
+    /// <summary>
+    /// Gets or sets the factory function for creating audio players.
+    /// Signature: (sampleRate, channels) => IAudioPlayer?
+    /// If null, audio playback will be disabled (video-only mode).
+    /// </summary>
+    public Func<int, int, IAudioPlayer?>? AudioPlayerFactory
+    {
+        get => GetValue(AudioPlayerFactoryProperty);
+        set => SetValue(AudioPlayerFactoryProperty, value);
+    }
+
+    /// <summary>
+    /// Defines the IconProvider property for injecting custom icon geometries.
+    /// If null, default Avalonia shapes will be used.
+    /// </summary>
+    public static readonly StyledProperty<IIconProvider?> IconProviderProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, IIconProvider?>(nameof(IconProvider), null);
+
+    /// <summary>
+    /// Gets or sets the icon provider for custom icon geometries.
+    /// If null, default Avalonia shapes will be used.
+    /// </summary>
+    public IIconProvider? IconProvider
+    {
+        get => GetValue(IconProviderProperty);
+        set => SetValue(IconProviderProperty, value);
+    }
+
+    /// <summary>
+    /// Defines the RenderingMode property.
+    /// </summary>
+    public static readonly StyledProperty<VideoRenderingMode> RenderingModeProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, VideoRenderingMode>(nameof(RenderingMode), VideoRenderingMode.Cpu);
+
+    /// <summary>
+    /// Gets or sets the video rendering mode.
+    /// Cpu: Uses WriteableBitmap (default, backward compatible).
+    /// OpenGL: Uses hardware-accelerated OpenGL rendering (requires OpenGL support).
+    /// </summary>
+    public VideoRenderingMode RenderingMode
+    {
+        get => GetValue(RenderingModeProperty);
+        set => SetValue(RenderingModeProperty, value);
+    }
+
+    // ── Control panel styling properties ──
+
+    /// <summary>Defines the IconSize property.</summary>
+    public static readonly StyledProperty<double> IconSizeProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, double>(nameof(IconSize), 14);
+
+    /// <summary>Defines the ControlFontSize property.</summary>
+    public static readonly StyledProperty<double> ControlFontSizeProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, double>(nameof(ControlFontSize), 11);
+
+    /// <summary>Defines the ButtonPadding property.</summary>
+    public static readonly StyledProperty<Thickness> ButtonPaddingProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, Thickness>(nameof(ButtonPadding), new Thickness(6, 3));
+
+    /// <summary>Defines the ControlPanelPadding property.</summary>
+    public static readonly StyledProperty<Thickness> ControlPanelPaddingProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, Thickness>(nameof(ControlPanelPadding), new Thickness(6, 4));
+
+    /// <summary>Defines the ButtonCornerRadius property.</summary>
+    public static readonly StyledProperty<CornerRadius> ButtonCornerRadiusProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, CornerRadius>(nameof(ButtonCornerRadius), new CornerRadius(3));
+
+    /// <summary>Defines the ControlForeground property.</summary>
+    public static readonly StyledProperty<Media.IBrush?> ControlForegroundProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, Media.IBrush?>(nameof(ControlForeground), null);
+
+    /// <summary>Defines the ButtonBackground property.</summary>
+    public static readonly StyledProperty<Media.IBrush?> ButtonBackgroundProperty =
+        AvaloniaProperty.Register<VideoPlayerControl, Media.IBrush?>(nameof(ButtonBackground), null);
+
+    /// <summary>
+    /// Gets or sets the size of playback control icons. Default is 14.
+    /// </summary>
+    public double IconSize
+    {
+        get => GetValue(IconSizeProperty);
+        set => SetValue(IconSizeProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the font size for control panel text. Default is 11.
+    /// </summary>
+    public double ControlFontSize
+    {
+        get => GetValue(ControlFontSizeProperty);
+        set => SetValue(ControlFontSizeProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the padding inside playback buttons. Default is 6,3.
+    /// </summary>
+    public Thickness ButtonPadding
+    {
+        get => GetValue(ButtonPaddingProperty);
+        set => SetValue(ButtonPaddingProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the padding of the entire control panel. Default is 6,4.
+    /// </summary>
+    public Thickness ControlPanelPadding
+    {
+        get => GetValue(ControlPanelPaddingProperty);
+        set => SetValue(ControlPanelPaddingProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the corner radius for playback buttons. Default is 3.
+    /// </summary>
+    public CornerRadius ButtonCornerRadius
+    {
+        get => GetValue(ButtonCornerRadiusProperty);
+        set => SetValue(ButtonCornerRadiusProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the foreground brush for control text and icons.
+    /// If null, defaults to #333333.
+    /// </summary>
+    public Media.IBrush? ControlForeground
+    {
+        get => GetValue(ControlForegroundProperty);
+        set => SetValue(ControlForegroundProperty, value);
+    }
+
+    /// <summary>
+    /// Gets or sets the background brush for playback buttons.
+    /// If null, defaults to #e8e8e8.
+    /// </summary>
+    public Media.IBrush? ButtonBackground
+    {
+        get => GetValue(ButtonBackgroundProperty);
+        set => SetValue(ButtonBackgroundProperty, value);
     }
 
     /// <summary>
@@ -258,14 +421,13 @@ public partial class VideoPlayerControl : UserControl
         // Enable focus so we can receive keyboard events
         Focusable = true;
 
-        _videoImage = this.FindControl<Image>("VideoImage");
         _seekBar = this.FindControl<Slider>("SeekBar");
         _volumeSlider = this.FindControl<Slider>("VolumeSlider");
         _currentTimeText = this.FindControl<TextBlock>("CurrentTimeText");
         _totalTimeText = this.FindControl<TextBlock>("TotalTimeText");
-        _playPauseIcon = this.FindControl<MaterialIcon>("PlayPauseIcon");
+        _playPauseIcon = this.FindControl<Path>("PlayPauseIcon");
         _playPauseText = this.FindControl<TextBlock>("PlayPauseText");
-        _volumeIcon = this.FindControl<MaterialIcon>("VolumeIcon");
+        _volumeIcon = this.FindControl<Path>("VolumeIcon");
         _controlPanelBorder = this.FindControl<Border>("ControlPanelBorder");
         _videoBorder = this.FindControl<Border>("VideoBorder");
         _openButton = this.FindControl<Button>("OpenButton");
@@ -295,11 +457,11 @@ public partial class VideoPlayerControl : UserControl
         }
 
         // Initialize when attached to visual tree
-        this.AttachedToVisualTree += OnAttachedToVisualTree;
-        this.DetachedFromVisualTree += OnDetachedFromVisualTree;
+        AttachedToVisualTree += OnAttachedToVisualTree;
+        DetachedFromVisualTree += OnDetachedFromVisualTree;
         
         // Handle property changes
-        this.PropertyChanged += OnPropertyChanged;
+        PropertyChanged += OnPropertyChanged;
     }
 
     protected override void OnKeyDown(KeyEventArgs e)
@@ -391,16 +553,24 @@ public partial class VideoPlayerControl : UserControl
         }
         else if (e.Property == VideoBackgroundProperty)
         {
-            if (_videoBorder != null && e.NewValue is Media.IBrush brush)
+            if (_videoBorder != null)
             {
-                _videoBorder.Background = brush;
+                _videoBorder.Background = e.NewValue as Media.IBrush; // Can be null for transparency
             }
         }
         else if (e.Property == VideoStretchProperty)
         {
-            if (_videoImage != null && e.NewValue is Media.Stretch stretch)
+            // Apply to renderer
+            if (e.NewValue is Media.Stretch rendererStretch)
             {
-                _videoImage.Stretch = stretch;
+                if (_videoRenderer is CpuVideoRenderer cpuRenderer)
+                {
+                    cpuRenderer.Stretch = rendererStretch;
+                }
+                else if (_videoRenderer is OpenGLVideoRenderer glRenderer)
+                {
+                    glRenderer.Stretch = rendererStretch;
+                }
             }
         }
         else if (e.Property == ShowControlsProperty)
@@ -409,6 +579,51 @@ public partial class VideoPlayerControl : UserControl
             {
                 _controlPanelBorder.IsVisible = (bool)(e.NewValue ?? true);
             }
+        }
+        else if (e.Property == RenderingModeProperty)
+        {
+            SetupVideoRenderer();
+        }
+        else if (e.Property == ControlForegroundProperty)
+        {
+            ApplyControlForeground(e.NewValue as Media.IBrush);
+        }
+        else if (e.Property == ButtonBackgroundProperty)
+        {
+            ApplyButtonBackground(e.NewValue as Media.IBrush);
+        }
+    }
+
+    private void ApplyControlForeground(Media.IBrush? brush)
+    {
+        if (brush == null) return;
+        // Apply to all icon Path elements
+        var icons = new[] {
+            this.FindControl<Path>("FolderIcon"),
+            _playPauseIcon,
+            this.FindControl<Path>("StopIcon"),
+            _volumeIcon
+        };
+        foreach (var icon in icons)
+        {
+            if (icon != null) icon.Fill = brush;
+        }
+        // Apply to time text
+        if (_currentTimeText != null) _currentTimeText.Foreground = brush;
+        if (_totalTimeText != null) _totalTimeText.Foreground = brush;
+    }
+
+    private void ApplyButtonBackground(Media.IBrush? brush)
+    {
+        if (brush == null) return;
+        var buttons = new[] {
+            _openButton,
+            this.FindControl<Button>("PlayPauseButton"),
+            this.FindControl<Button>("StopButton")
+        };
+        foreach (var btn in buttons)
+        {
+            if (btn != null) btn.Background = brush;
         }
     }
 
@@ -434,7 +649,9 @@ public partial class VideoPlayerControl : UserControl
                 FFmpegInitializer.Initialize();
             }
 
-            _mediaPlayer = new FFmpegMediaPlayer();
+            _mediaPlayer = new FFmpegMediaPlayer(
+                synchronizationCallback: action => Dispatcher.UIThread.Post(action),
+                audioPlayerFactory: AudioPlayerFactory);
 
             // Subscribe to media player events
             _mediaPlayer.PositionChanged += OnPositionChanged;
@@ -446,6 +663,9 @@ public partial class VideoPlayerControl : UserControl
             _mediaPlayer.FrameReady += OnFrameReady;
 
             _isInitialized = true;
+            
+            // Setup video renderer based on rendering mode
+            SetupVideoRenderer();
             
             // Apply initial property values
             if (_openButton != null)
@@ -460,23 +680,24 @@ public partial class VideoPlayerControl : UserControl
                     _controlPanelBorder.Background = ControlPanelBackground;
                 }
             }
-            if (_videoBorder != null && VideoBackground != null)
+            if (_videoBorder != null)
             {
-                _videoBorder.Background = VideoBackground;
+                _videoBorder.Background = VideoBackground; // Can be null for transparency
             }
-            if (_videoImage != null)
+            // Apply VideoStretch to renderer
+            if (_videoRenderer is CpuVideoRenderer cpuRenderer)
             {
-                _videoImage.Stretch = VideoStretch;
+                cpuRenderer.Stretch = VideoStretch;
+            }
+            else if (_videoRenderer is OpenGLVideoRenderer glRenderer)
+            {
+                glRenderer.Stretch = VideoStretch;
             }
             
-            // Load source if set
+            // Load source if set (Open() handles AutoPlay internally)
             if (!string.IsNullOrEmpty(Source))
             {
                 Open(Source);
-                if (AutoPlay)
-                {
-                    Play();
-                }
             }
         }
         catch (Exception ex)
@@ -485,49 +706,87 @@ public partial class VideoPlayerControl : UserControl
         }
     }
 
+    private void SetupVideoRenderer()
+    {
+        if (_videoBorder == null) return;
+
+        // Dispose old renderer
+        if (_videoRenderer != null)
+        {
+            _videoRenderer.Dispose();
+            _videoRenderer = null;
+        }
+
+        // Remove old renderer from visual tree
+        _videoBorder.Child = null;
+
+        // Create new renderer based on mode
+        Control? rendererControl = null;
+        try
+        {
+            switch (RenderingMode)
+            {
+                case VideoRenderingMode.Cpu:
+                    _videoRenderer = new CpuVideoRenderer();
+                    rendererControl = (Control)_videoRenderer;
+                    break;
+
+                case VideoRenderingMode.OpenGL:
+                    // Try to create OpenGL renderer, fallback to CPU if not available
+                    try
+                    {
+                        _videoRenderer = new OpenGLVideoRenderer();
+                        rendererControl = (Control)_videoRenderer;
+                    }
+                    catch (Exception ex)
+                    {
+                        Debug.WriteLine($"[VideoPlayerControl] OpenGL renderer not available, falling back to CPU: {ex.Message}");
+                        _videoRenderer = new CpuVideoRenderer();
+                        rendererControl = (Control)_videoRenderer;
+                    }
+                    break;
+            }
+        }
+        catch (Exception ex)
+        {
+            Debug.WriteLine($"[VideoPlayerControl] Failed to create renderer: {ex.Message}");
+            // Fallback to CPU renderer
+            _videoRenderer = new CpuVideoRenderer();
+            rendererControl = (Control)_videoRenderer;
+        }
+
+        if (rendererControl != null)
+        {
+            rendererControl.HorizontalAlignment = Avalonia.Layout.HorizontalAlignment.Stretch;
+            rendererControl.VerticalAlignment = Avalonia.Layout.VerticalAlignment.Stretch;
+            
+            _videoBorder.Child = rendererControl;
+            
+            // Apply VideoStretch to the renderer (cast to concrete type to access Stretch property)
+            if (_videoRenderer is CpuVideoRenderer cpuRenderer)
+            {
+                cpuRenderer.Stretch = VideoStretch;
+            }
+            else if (_videoRenderer is OpenGLVideoRenderer glRenderer)
+            {
+                glRenderer.Stretch = VideoStretch;
+            }
+        }
+    }
+
     private void OnFrameReady(object? sender, FrameEventArgs e)
     {
         // Note: This is already called on the UI thread via Dispatcher.UIThread.Post in FFmpegMediaPlayer
         try
         {
-            // Create or recreate bitmap if needed
-            if (_frameBitmap == null || 
-                _frameBitmap.PixelSize.Width != e.Width || 
-                _frameBitmap.PixelSize.Height != e.Height)
+            if (_videoRenderer != null)
             {
-                _frameBitmap = new WriteableBitmap(
-                    new PixelSize(e.Width, e.Height),
-                    new Vector(96, 96),
-                    Avalonia.Platform.PixelFormat.Bgra8888,
-                    Avalonia.Platform.AlphaFormat.Premul);
+                // Use the renderer interface
+                _videoRenderer.RenderFrame(e.Data, e.Width, e.Height, e.Stride);
             }
-
-            // Copy frame data to bitmap
-            using (var fb = _frameBitmap.Lock())
+            else
             {
-                var destPtr = fb.Address;
-                
-                for (int y = 0; y < e.Height; y++)
-                {
-                    var sourceOffset = y * e.Stride;
-                    var destOffset = y * fb.RowBytes;
-                    var maxRowLength = Math.Min(e.Stride, fb.RowBytes);
-                    var requestedLength = Math.Min(e.Width * 4, maxRowLength);
-                    var available = Math.Max(0, e.DataLength - sourceOffset);
-                    var rowLength = Math.Min(requestedLength, available);
-                    if (rowLength <= 0)
-                    {
-                        break;
-                    }
-
-                    Marshal.Copy(e.Data, sourceOffset, destPtr + destOffset, rowLength);
-                }
-            }
-
-            if (_videoImage != null)
-            {
-                _videoImage.Source = _frameBitmap;
-                _videoImage.InvalidateVisual();
+                Debug.WriteLine("[VideoPlayerControl] Warning: No video renderer available, frame dropped.");
             }
         }
         catch (Exception ex)
@@ -570,6 +829,10 @@ public partial class VideoPlayerControl : UserControl
         _hasMediaLoaded = true;
         Debug.WriteLine($"[VideoPlayerControl] Media loaded successfully, raising MediaOpened event");
         MediaOpened?.Invoke(this, new MediaOpenedEventArgs(path));
+
+        // Decode and display first frame as thumbnail/preview
+        // This ensures the video has correct dimensions before playback starts
+        _mediaPlayer.DecodeFirstFrame();
 
         if (AutoPlay)
         {
@@ -617,6 +880,26 @@ public partial class VideoPlayerControl : UserControl
         _mediaPlayer?.Stop();
         if (_seekBar != null) _seekBar.Value = 0;
         if (_currentTimeText != null) _currentTimeText.Text = "00:00";
+        // Clear the renderer to show background when stopped
+        _videoRenderer?.Clear();
+    }
+
+    /// <summary>
+    /// Steps forward exactly one frame. Pauses playback after displaying the frame.
+    /// </summary>
+    /// <returns>True if a frame was successfully decoded and displayed, false otherwise.</returns>
+    public bool StepForward()
+    {
+        return _mediaPlayer?.StepForward() ?? false;
+    }
+
+    /// <summary>
+    /// Steps backward one frame. Uses cached frames when available, otherwise seeks to previous keyframe and decodes forward.
+    /// </summary>
+    /// <returns>True if a frame was successfully displayed, false otherwise.</returns>
+    public bool StepBackward()
+    {
+        return _mediaPlayer?.StepBackward() ?? false;
     }
 
     /// <summary>
@@ -669,6 +952,8 @@ public partial class VideoPlayerControl : UserControl
     {
         UpdatePlayPauseButton(false);
         PlaybackStopped?.Invoke(this, EventArgs.Empty);
+        // Clear the renderer to show background when stopped
+        _videoRenderer?.Clear();
     }
 
     private void OnEndReached(object? sender, EventArgs e)
@@ -677,6 +962,8 @@ public partial class VideoPlayerControl : UserControl
         {
             UpdatePlayPauseButton(false);
             MediaEnded?.Invoke(this, EventArgs.Empty);
+            // Clear the renderer to show background when playback ends
+            _videoRenderer?.Clear();
         });
     }
 
@@ -808,13 +1095,13 @@ public partial class VideoPlayerControl : UserControl
             _previousVolume = _mediaPlayer.Volume;
             _mediaPlayer.Volume = 0;
             _volumeSlider.Value = 0;
-            _volumeIcon.Kind = MaterialIconKind.VolumeOff;
+            _volumeIcon.Data = GetIconProvider().CreateVolumeOffIcon();
         }
         else
         {
             _mediaPlayer.Volume = _previousVolume;
             _volumeSlider.Value = _previousVolume;
-            _volumeIcon.Kind = MaterialIconKind.VolumeHigh;
+            _volumeIcon.Data = GetIconProvider().CreateVolumeHighIcon();
         }
     }
 
@@ -822,15 +1109,21 @@ public partial class VideoPlayerControl : UserControl
     {
         Dispatcher.UIThread.Post(() =>
         {
+            var iconProvider = GetIconProvider();
             if (_playPauseIcon != null)
             {
-                _playPauseIcon.Kind = isPlaying ? MaterialIconKind.Pause : MaterialIconKind.Play;
+                _playPauseIcon.Data = isPlaying ? iconProvider.CreatePauseIcon() : iconProvider.CreatePlayIcon();
             }
             if (_playPauseText != null)
             {
                 _playPauseText.Text = isPlaying ? "Pause" : "Play";
             }
         });
+    }
+
+    private IIconProvider GetIconProvider()
+    {
+        return IconProvider ?? DefaultIconProvider.Instance;
     }
 
     private static string FormatTime(TimeSpan time)
@@ -854,7 +1147,13 @@ public partial class VideoPlayerControl : UserControl
             _mediaPlayer.Dispose();
             _mediaPlayer = null;
         }
-        _frameBitmap = null;
+        
+        if (_videoRenderer != null)
+        {
+            _videoRenderer.Dispose();
+            _videoRenderer = null;
+        }
+        
         _isInitialized = false;
         _currentMediaPath = null;
         _hasMediaLoaded = false;
@@ -875,4 +1174,187 @@ public sealed class MediaOpenedEventArgs : EventArgs
     /// Gets the full path of the media that was opened.
     /// </summary>
     public string Path { get; }
+}
+
+/// <summary>
+/// Interface for providing custom icon geometries.
+/// Implement this interface to provide custom icons for the video player control.
+/// </summary>
+public interface IIconProvider
+{
+    /// <summary>
+    /// Creates a play icon geometry (triangle pointing right).
+    /// </summary>
+    Geometry CreatePlayIcon();
+
+    /// <summary>
+    /// Creates a pause icon geometry (two vertical bars).
+    /// </summary>
+    Geometry CreatePauseIcon();
+
+    /// <summary>
+    /// Creates a stop icon geometry (square).
+    /// </summary>
+    Geometry CreateStopIcon();
+
+    /// <summary>
+    /// Creates a folder open icon geometry.
+    /// </summary>
+    Geometry CreateFolderOpenIcon();
+
+    /// <summary>
+    /// Creates a volume high icon geometry (speaker with sound waves).
+    /// </summary>
+    Geometry CreateVolumeHighIcon();
+
+    /// <summary>
+    /// Creates a volume off icon geometry (speaker with X).
+    /// </summary>
+    Geometry CreateVolumeOffIcon();
+}
+
+/// <summary>
+/// Default icon provider using standard Avalonia shapes.
+/// </summary>
+public sealed class DefaultIconProvider : IIconProvider
+{
+    /// <summary>
+    /// Gets the singleton instance of the default icon provider.
+    /// </summary>
+    public static DefaultIconProvider Instance { get; } = new DefaultIconProvider();
+
+    private DefaultIconProvider() { }
+
+    /// <summary>
+    /// Creates a play icon geometry (triangle pointing right).
+    /// </summary>
+    public Geometry CreatePlayIcon()
+    {
+        var geometry = new PathGeometry();
+        var figure = new PathFigure { StartPoint = new Point(6, 4) };
+        figure.Segments!.Add(new LineSegment { Point = new Point(6, 16) });
+        figure.Segments!.Add(new LineSegment { Point = new Point(18, 10) });
+        figure.Segments!.Add(new LineSegment { Point = new Point(6, 4) });
+        geometry.Figures!.Add(figure);
+        return geometry;
+    }
+
+    /// <summary>
+    /// Creates a pause icon geometry (two vertical bars).
+    /// </summary>
+    public Geometry CreatePauseIcon()
+    {
+        var geometry = new PathGeometry();
+        
+        // Left bar
+        var leftFigure = new PathFigure { StartPoint = new Point(6, 4) };
+        leftFigure.Segments!.Add(new LineSegment { Point = new Point(10, 4) });
+        leftFigure.Segments!.Add(new LineSegment { Point = new Point(10, 16) });
+        leftFigure.Segments!.Add(new LineSegment { Point = new Point(6, 16) });
+        leftFigure.IsClosed = true;
+        geometry.Figures!.Add(leftFigure);
+        
+        // Right bar
+        var rightFigure = new PathFigure { StartPoint = new Point(14, 4) };
+        rightFigure.Segments!.Add(new LineSegment { Point = new Point(18, 4) });
+        rightFigure.Segments!.Add(new LineSegment { Point = new Point(18, 16) });
+        rightFigure.Segments!.Add(new LineSegment { Point = new Point(14, 16) });
+        rightFigure.IsClosed = true;
+        geometry.Figures!.Add(rightFigure);
+        
+        return geometry;
+    }
+
+    /// <summary>
+    /// Creates a stop icon geometry (square).
+    /// </summary>
+    public Geometry CreateStopIcon()
+    {
+        return new RectangleGeometry { Rect = new Rect(6, 6, 12, 12) };
+    }
+
+    /// <summary>
+    /// Creates a folder open icon geometry.
+    /// </summary>
+    public Geometry CreateFolderOpenIcon()
+    {
+        var geometry = new PathGeometry();
+        var figure = new PathFigure { StartPoint = new Point(4, 6) };
+        figure.Segments!.Add(new LineSegment { Point = new Point(4, 8) });
+        figure.Segments!.Add(new LineSegment { Point = new Point(6, 8) });
+        figure.Segments!.Add(new LineSegment { Point = new Point(8, 6) });
+        figure.Segments!.Add(new LineSegment { Point = new Point(16, 6) });
+        figure.Segments!.Add(new LineSegment { Point = new Point(18, 8) });
+        figure.Segments!.Add(new LineSegment { Point = new Point(18, 16) });
+        figure.Segments!.Add(new LineSegment { Point = new Point(4, 16) });
+        figure.Segments!.Add(new LineSegment { Point = new Point(4, 6) });
+        geometry.Figures!.Add(figure);
+        
+        // Add open flap
+        var flap = new PathFigure { StartPoint = new Point(4, 8) };
+        flap.Segments!.Add(new LineSegment { Point = new Point(6, 10) });
+        flap.Segments!.Add(new LineSegment { Point = new Point(18, 10) });
+        flap.Segments!.Add(new LineSegment { Point = new Point(18, 8) });
+        geometry.Figures!.Add(flap);
+        
+        return geometry;
+    }
+
+    /// <summary>
+    /// Creates a volume high icon geometry (speaker with sound waves).
+    /// </summary>
+    public Geometry CreateVolumeHighIcon()
+    {
+        var geometry = new PathGeometry();
+        
+        // Speaker cone
+        var speaker = new PathFigure { StartPoint = new Point(5, 6) };
+        speaker.Segments!.Add(new LineSegment { Point = new Point(5, 14) });
+        speaker.Segments!.Add(new LineSegment { Point = new Point(9, 14) });
+        speaker.Segments!.Add(new LineSegment { Point = new Point(13, 18) });
+        speaker.Segments!.Add(new LineSegment { Point = new Point(13, 2) });
+        speaker.Segments!.Add(new LineSegment { Point = new Point(9, 6) });
+        speaker.Segments!.Add(new LineSegment { Point = new Point(5, 6) });
+        geometry.Figures!.Add(speaker);
+        
+        // Sound waves
+        var wave1 = new PathFigure { StartPoint = new Point(15, 8) };
+        wave1.Segments!.Add(new ArcSegment { Point = new Point(15, 12), Size = new Size(2, 2), SweepDirection = SweepDirection.Clockwise });
+        geometry.Figures!.Add(wave1);
+        
+        var wave2 = new PathFigure { StartPoint = new Point(17, 6) };
+        wave2.Segments!.Add(new ArcSegment { Point = new Point(17, 14), Size = new Size(3, 3), SweepDirection = SweepDirection.Clockwise });
+        geometry.Figures!.Add(wave2);
+        
+        return geometry;
+    }
+
+    /// <summary>
+    /// Creates a volume off icon geometry (speaker with X).
+    /// </summary>
+    public Geometry CreateVolumeOffIcon()
+    {
+        var geometry = new PathGeometry();
+        
+        // Speaker cone
+        var speaker = new PathFigure { StartPoint = new Point(5, 6) };
+        speaker.Segments!.Add(new LineSegment { Point = new Point(5, 14) });
+        speaker.Segments!.Add(new LineSegment { Point = new Point(9, 14) });
+        speaker.Segments!.Add(new LineSegment { Point = new Point(13, 18) });
+        speaker.Segments!.Add(new LineSegment { Point = new Point(13, 2) });
+        speaker.Segments!.Add(new LineSegment { Point = new Point(9, 6) });
+        speaker.Segments!.Add(new LineSegment { Point = new Point(5, 6) });
+        geometry.Figures!.Add(speaker);
+        
+        // X mark
+        var x1 = new PathFigure { StartPoint = new Point(15, 5) };
+        x1.Segments!.Add(new LineSegment { Point = new Point(19, 9) });
+        geometry.Figures!.Add(x1);
+        
+        var x2 = new PathFigure { StartPoint = new Point(15, 9) };
+        x2.Segments!.Add(new LineSegment { Point = new Point(19, 5) });
+        geometry.Figures!.Add(x2);
+        
+        return geometry;
+    }
 }

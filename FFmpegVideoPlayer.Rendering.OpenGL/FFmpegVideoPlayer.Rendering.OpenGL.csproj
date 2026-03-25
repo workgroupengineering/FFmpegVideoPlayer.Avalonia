@@ -1,0 +1,39 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <Nullable>enable</Nullable>
+    <LangVersion>latest</LangVersion>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    
+    <!-- NuGet Package Properties -->
+    <PackageId>FFmpegVideoPlayer.Rendering.OpenGL</PackageId>
+    <AssemblyName>FFmpegVideoPlayer.Rendering.OpenGL</AssemblyName>
+    <RootNamespace>FFmpegVideoPlayer.Rendering.OpenGL</RootNamespace>
+    <Version>2.1.8</Version>
+    <Authors>jojomondag</Authors>
+    <Company>jojomondag</Company>
+    <Description>OpenGL-based hardware-accelerated rendering for FFmpegVideoPlayer. Provides OpenGL texture-based video rendering for improved performance.</Description>
+    <PackageTags>ffmpeg;video;player;opengl;hardware;acceleration;rendering;cross-platform</PackageTags>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageProjectUrl>https://github.com/jojomondag/FFmpegVideoPlayer.Avalonia</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/jojomondag/FFmpegVideoPlayer.Avalonia</RepositoryUrl>
+    
+    <!-- Generate XML documentation -->
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Reference Core and Avalonia projects -->
+    <ProjectReference Include="..\FFmpegVideoPlayer.Core\FFmpegVideoPlayer.Core.csproj" />
+    <ProjectReference Include="..\Avalonia.FFmpegVideoPlayer.csproj" />
+    
+    <!-- OpenTK for OpenGL support -->
+    <PackageReference Include="OpenTK" Version="4.8.2" />
+    <PackageReference Include="Avalonia" Version="11.3.6" />
+  </ItemGroup>
+
+</Project>
+

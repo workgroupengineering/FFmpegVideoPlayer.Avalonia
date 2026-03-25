@@ -2,10 +2,21 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
              xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
-             xmlns:mi="using:Material.Icons.Avalonia"
+             xmlns:local="clr-namespace:Avalonia.FFmpegVideoPlayer"
              mc:Ignorable="d" d:DesignWidth="800" d:DesignHeight="500"
-             x:Class="Avalonia.FFmpegVideoPlayer.VideoPlayerControl">
-    
+             x:Class="Avalonia.FFmpegVideoPlayer.VideoPlayerControl"
+             x:Name="Root">
+
+    <UserControl.Resources>
+        <!-- Icon Geometries - Using PathGeometry with path data strings -->
+        <PathGeometry x:Key="PlayIcon" Figures="M 6,4 L 6,16 L 18,10 Z"/>
+        <PathGeometry x:Key="PauseIcon" Figures="M 6,4 L 10,4 L 10,16 L 6,16 Z M 14,4 L 18,4 L 18,16 L 14,16 Z"/>
+        <PathGeometry x:Key="StopIcon" Figures="M 6,6 L 18,6 L 18,18 L 6,18 Z"/>
+        <PathGeometry x:Key="FolderOpenIcon" Figures="M 4,6 L 4,8 L 6,8 L 8,6 L 16,6 L 18,8 L 18,16 L 4,16 Z M 4,8 L 6,10 L 18,10 L 18,8 Z"/>
+        <PathGeometry x:Key="VolumeHighIcon" Figures="M 5,6 L 5,14 L 9,14 L 13,18 L 13,2 L 9,6 Z M 15,8 A 2,2 0 0,1 15,12 M 17,6 A 3,3 0 0,1 17,14"/>
+        <PathGeometry x:Key="VolumeOffIcon" Figures="M 5,6 L 5,14 L 9,14 L 13,18 L 13,2 L 9,6 Z M 15,5 L 19,9 M 15,9 L 19,5"/>
+    </UserControl.Resources>
+
     <UserControl.Styles>
         <!-- Button style for media controls - custom template to remove overlay -->
         <Style Selector="Button.mediaButton">
@@ -13,8 +24,8 @@
             <Setter Property="Foreground" Value="#333333"/>
             <Setter Property="BorderBrush" Value="#999999"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="10,6"/>
-            <Setter Property="CornerRadius" Value="4"/>
+            <Setter Property="Padding" Value="{Binding ButtonPadding, ElementName=Root}"/>
+            <Setter Property="CornerRadius" Value="{Binding ButtonCornerRadius, ElementName=Root}"/>
             <Setter Property="Template">
                 <ControlTemplate>
                     <Border Background="{TemplateBinding Background}"
@@ -37,69 +48,91 @@
             <Setter Property="Background" Value="#c0c0c0"/>
         </Style>
     </UserControl.Styles>
-    
+
     <Grid RowDefinitions="*,Auto">
         <!-- Video View - Using Image control for FFmpeg decoded frames -->
-        <Border Name="VideoBorder" Grid.Row="0" Background="Black">
+        <Border Name="VideoBorder" Grid.Row="0" Background="{Binding VideoBackground, ElementName=Root}">
             <Image Name="VideoImage" Stretch="Uniform" />
         </Border>
-        
+
         <!-- Controls Panel -->
-        <Border Name="ControlPanelBorder" Grid.Row="1" Background="White" Padding="10">
+        <Border Name="ControlPanelBorder" Grid.Row="1" Background="White"
+                Padding="{Binding ControlPanelPadding, ElementName=Root}">
             <Grid RowDefinitions="Auto,Auto">
                 <!-- Seek Bar -->
-                <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,8">
-                    <TextBlock Name="CurrentTimeText" Grid.Column="0" 
-                               Text="00:00" Foreground="#333333" 
-                               VerticalAlignment="Center" Margin="0,0,10,0" FontSize="12"/>
-                    <Slider Name="SeekBar" Grid.Column="1" 
+                <Grid Grid.Row="0" ColumnDefinitions="Auto,*,Auto" Margin="0,0,0,4">
+                    <TextBlock Name="CurrentTimeText" Grid.Column="0"
+                               Text="00:00"
+                               VerticalAlignment="Center" Margin="0,0,6,0"
+                               FontSize="{Binding ControlFontSize, ElementName=Root}"/>
+                    <Slider Name="SeekBar" Grid.Column="1"
                             Minimum="0" Maximum="100" Value="0"
                             VerticalAlignment="Center"/>
-                    <TextBlock Name="TotalTimeText" Grid.Column="2" 
-                               Text="00:00" Foreground="#333333" 
-                               VerticalAlignment="Center" Margin="10,0,0,0" FontSize="12"/>
+                    <TextBlock Name="TotalTimeText" Grid.Column="2"
+                               Text="00:00"
+                               VerticalAlignment="Center" Margin="6,0,0,0"
+                               FontSize="{Binding ControlFontSize, ElementName=Root}"/>
                 </Grid>
-                
+
                 <!-- Playback Controls -->
                 <Grid Grid.Row="1" ColumnDefinitions="Auto,Auto,Auto,*,Auto,Auto">
                     <!-- Open File Button -->
-                    <Button Name="OpenButton" Grid.Column="0" Margin="0,0,5,0"
+                    <Button Name="OpenButton" Grid.Column="0" Margin="0,0,3,0"
                             Classes="mediaButton" Click="OnOpenClick">
-                        <StackPanel Orientation="Horizontal" Spacing="5">
-                            <mi:MaterialIcon Kind="FolderOpen" Width="20" Height="20" Foreground="#333333"/>
-                            <TextBlock Text="Open" VerticalAlignment="Center" Foreground="#333333"/>
+                        <StackPanel Orientation="Horizontal" Spacing="3">
+                            <Path Name="FolderIcon"
+                                  Width="{Binding IconSize, ElementName=Root}"
+                                  Height="{Binding IconSize, ElementName=Root}"
+                                  Stretch="Uniform" Fill="#333333"
+                                  Data="{StaticResource FolderOpenIcon}"/>
+                            <TextBlock Text="Open" VerticalAlignment="Center"
+                                       FontSize="{Binding ControlFontSize, ElementName=Root}"/>
                         </StackPanel>
                     </Button>
-                    
+
                     <!-- Play/Pause Button -->
-                    <Button Name="PlayPauseButton" Grid.Column="1" Width="90" Margin="0,0,5,0"
+                    <Button Name="PlayPauseButton" Grid.Column="1" Margin="0,0,3,0"
                             Classes="mediaButton" Click="OnPlayPauseClick">
-                        <StackPanel Orientation="Horizontal" Spacing="5">
-                            <mi:MaterialIcon Name="PlayPauseIcon" Kind="Play" Width="20" Height="20" Foreground="#333333"/>
-                            <TextBlock Name="PlayPauseText" Text="Play" VerticalAlignment="Center" Foreground="#333333"/>
+                        <StackPanel Orientation="Horizontal" Spacing="3">
+                            <Path Name="PlayPauseIcon"
+                                  Width="{Binding IconSize, ElementName=Root}"
+                                  Height="{Binding IconSize, ElementName=Root}"
+                                  Stretch="Uniform" Fill="#333333"
+                                  Data="{StaticResource PlayIcon}"/>
+                            <TextBlock Name="PlayPauseText" Text="Play" VerticalAlignment="Center"
+                                       FontSize="{Binding ControlFontSize, ElementName=Root}"/>
                         </StackPanel>
                     </Button>
-                    
+
                     <!-- Stop Button -->
-                    <Button Name="StopButton" Grid.Column="2" Margin="0,0,5,0"
+                    <Button Name="StopButton" Grid.Column="2" Margin="0,0,3,0"
                             Classes="mediaButton" Click="OnStopClick">
-                        <StackPanel Orientation="Horizontal" Spacing="5">
-                            <mi:MaterialIcon Kind="Stop" Width="20" Height="20" Foreground="#333333"/>
-                            <TextBlock Text="Stop" VerticalAlignment="Center" Foreground="#333333"/>
+                        <StackPanel Orientation="Horizontal" Spacing="3">
+                            <Path Name="StopIcon"
+                                  Width="{Binding IconSize, ElementName=Root}"
+                                  Height="{Binding IconSize, ElementName=Root}"
+                                  Stretch="Uniform" Fill="#333333"
+                                  Data="{StaticResource StopIcon}"/>
+                            <TextBlock Text="Stop" VerticalAlignment="Center"
+                                       FontSize="{Binding ControlFontSize, ElementName=Root}"/>
                         </StackPanel>
                     </Button>
-                    
+
                     <!-- Spacer -->
                     <Panel Grid.Column="3"/>
-                    
+
                     <!-- Volume Icon (clickable to toggle mute) -->
-                    <Button Name="VolumeButton" Grid.Column="4" Padding="4" Margin="0,0,5,0"
+                    <Button Name="VolumeButton" Grid.Column="4" Padding="2" Margin="0,0,3,0"
                             Background="Transparent" BorderThickness="0" Click="OnMuteClick"
                             VerticalAlignment="Center" Cursor="Hand">
-                        <mi:MaterialIcon Name="VolumeIcon" Kind="VolumeHigh" Width="20" Height="20" Foreground="#333333"/>
+                        <Path Name="VolumeIcon"
+                              Width="{Binding IconSize, ElementName=Root}"
+                              Height="{Binding IconSize, ElementName=Root}"
+                              Stretch="Uniform" Fill="#333333"
+                              Data="{StaticResource VolumeHighIcon}"/>
                     </Button>
-                    <Slider Name="VolumeSlider" Grid.Column="5" 
-                            Width="100" Minimum="0" Maximum="100" Value="100"
+                    <Slider Name="VolumeSlider" Grid.Column="5"
+                            Width="80" Minimum="0" Maximum="100" Value="100"
                             VerticalAlignment="Center"/>
                 </Grid>
             </Grid>

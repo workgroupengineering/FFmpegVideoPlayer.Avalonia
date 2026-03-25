@@ -3,6 +3,7 @@ using System.Diagnostics;
 using System.IO;
 using Avalonia;
 using Avalonia.FFmpegVideoPlayer;
+using FFmpegVideoPlayer.Core;
 using Serilog;
 
 namespace FFmpegVideoPlayerExample;
@@ -24,7 +25,15 @@ class Program
                 Console.WriteLine(msg);
             };
 
+            // Initialize FFmpeg
+            // Option 1: Use bundled binaries (default - if included in package)
             FFmpegInitializer.Initialize();
+            
+            // Option 2: Use custom FFmpeg path (recommended to avoid conflicts)
+            // FFmpegInitializer.Initialize(customPath: @"C:\ffmpeg\bin", useBundledBinaries: false);
+            
+            // Option 3: Disable bundled binaries, use system FFmpeg
+            // FFmpegInitializer.Initialize(useBundledBinaries: false);
 
             BuildAvaloniaApp().StartWithClassicDesktopLifetime(args);
         }

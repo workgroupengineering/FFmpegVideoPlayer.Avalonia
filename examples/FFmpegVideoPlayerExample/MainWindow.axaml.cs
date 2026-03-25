@@ -3,6 +3,8 @@ using Avalonia.Controls;
 using Avalonia.FFmpegVideoPlayer;
 using Avalonia.Interactivity;
 using Avalonia.Media;
+using FFmpegVideoPlayer.Audio.OpenTK;
+using FFmpegVideoPlayer.Core;
 using Serilog;
 
 namespace FFmpegVideoPlayerExample;
@@ -12,6 +14,10 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        
+        // Set up optional audio factory - if Audio.OpenTK package is not referenced, 
+        // audio will be disabled (video-only mode)
+        VideoPlayer.AudioPlayerFactory = (sampleRate, channels) => AudioPlayerFactory.Create(sampleRate, channels);
         
         ShowControlsCheckBox.IsCheckedChanged += OnShowControlsChanged;
         TransparentBgCheckBox.IsCheckedChanged += OnTransparentBgChanged;

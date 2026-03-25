@@ -1,11 +1,10 @@
 <Application xmlns="https://github.com/avaloniaui"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-             xmlns:materialIcons="clr-namespace:Material.Icons.Avalonia;assembly=Material.Icons.Avalonia"
              x:Class="FFmpegVideoPlayerExample.App"
              RequestedThemeVariant="Default">
     <Application.Styles>
         <FluentTheme />
-        <!-- Required for video player icons -->
-        <materialIcons:MaterialIconStyles />
+        <!-- Icons are provided by default using standard Avalonia shapes -->
+        <!-- To use custom icons, set VideoPlayerControl.IconProvider property -->
     </Application.Styles>
 </Application>

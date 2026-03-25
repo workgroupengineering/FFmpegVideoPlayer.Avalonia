@@ -17,7 +17,10 @@ dotnet run
 
 - Basic setup with `FFmpegInitializer.Initialize()`
 - Using `VideoPlayerControl` in XAML
-- Required Material.Icons styles for the player UI
+- Optional audio support via `AudioPlayerFactory` property (requires FFmpegVideoPlayer.Audio.OpenTK package)
+  - **Note**: On Windows, OpenAL Soft must be installed or `openal32.dll` must be present. See main README for details.
+- Default icons using standard Avalonia shapes (no Material.Icons dependency)
+- FFmpeg initialization options (see `Program.cs` for examples of custom path usage)
 
 ### Project Structure
 

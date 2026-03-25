@@ -37,10 +37,10 @@
             </Setter>
         </Style>
         <Style Selector="Button.iconButton:pointerover">
-            <Setter Property="Opacity" Value="0.7"/>
+            <Setter Property="Background" Value="#18000000"/>
         </Style>
         <Style Selector="Button.iconButton:pressed">
-            <Setter Property="Opacity" Value="0.5"/>
+            <Setter Property="Background" Value="#28000000"/>
         </Style>
 
         <!-- Legacy mediaButton style kept for backward compat -->

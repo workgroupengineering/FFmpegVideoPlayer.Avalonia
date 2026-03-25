@@ -1319,12 +1319,32 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
             }
         }
 
-        _logger.Log("FFmpegMediaPlayer", "PlaybackLoopEnded", new 
-        { 
-            AudioPacketsProcessed = audioPacketsProcessed,
-            VideoPacketsProcessed = videoPacketsProcessed
-        });
-        _isPlaying = false;
+        lock (_lock)
+        {
+            _logger.Log("FFmpegMediaPlayer", "PlaybackLoopEnded", new
+            {
+                AudioPacketsProcessed = audioPacketsProcessed,
+                VideoPacketsProcessed = videoPacketsProcessed
+            });
+            _isPlaying = false;
+            _isPaused = false;
+
+            // Seek back to start so Play() can restart from the beginning
+            if (_formatContext != null)
+            {
+                ffmpeg.av_seek_frame(_formatContext, -1, 0, ffmpeg.AVSEEK_FLAG_BACKWARD);
+                if (_videoCodecContext != null)
+                    ffmpeg.avcodec_flush_buffers(_videoCodecContext);
+                if (_audioCodecContext != null)
+                    ffmpeg.avcodec_flush_buffers(_audioCodecContext);
+            }
+
+            _position = 0;
+            _needsResync = true;
+            _lastFramePts = -1;
+
+            _audioPlayer?.Stop();
+        }
     }
 
     private void ProcessVideoPacket(Stopwatch stopwatch, ref double firstFramePts, ref double lastVideoPts)

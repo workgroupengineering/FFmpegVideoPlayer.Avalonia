@@ -10,11 +10,11 @@
     <PackageId>FFmpegVideoPlayer.Avalonia</PackageId>
     <AssemblyName>Avalonia.FFmpegVideoPlayer</AssemblyName>
     <RootNamespace>Avalonia.FFmpegVideoPlayer</RootNamespace>
-    <Version>2.6.1</Version>
+    <Version>2.6.2</Version>
     <Authors>jojomondag</Authors>
     <Company>jojomondag</Company>
     <Description>Self-contained FFmpeg video player for Avalonia UI. FFmpeg libraries bundled - no installation required.</Description>
-    <PackageReleaseNotes>v2.3.0: Customizable control panel styling via StyledProperties: IconSize, ControlFontSize, ButtonPadding, ControlPanelPadding, ButtonCornerRadius, ControlForeground, ButtonBackground. CpuVideoRenderer now reports correct desired size via MeasureOverride. v2.2.0: Added DecodeFirstFrame() for instant thumbnail preview. v2.1.8: Fixed audio/video sync. v2.1.7: Keyboard shortcuts.</PackageReleaseNotes>
+    <PackageReleaseNotes>v2.6.2: Default audio playback via OpenAL (OpenTK) when AudioPlayerFactory is not set; fixes silent playback caused by passing null. v2.3.0: Customizable control panel styling via StyledProperties. v2.2.0: DecodeFirstFrame() for thumbnails. v2.1.8: Audio/video sync.</PackageReleaseNotes>
     <PackageTags>avalonia;ffmpeg;video;player;media;cross-platform;arm64;self-contained</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/jojomondag/FFmpegVideoPlayer.Avalonia</PackageProjectUrl>
@@ -53,9 +53,10 @@
     <PackageReference Include="Avalonia" Version="11.3.6" />
   </ItemGroup>
 
-  <!-- Reference the Core project only - Audio.OpenTK is optional and should be referenced separately if needed -->
+  <!-- Core + OpenTK audio (OpenAL) so playback has sound by default; override via AudioPlayerFactory property if needed -->
   <ItemGroup>
     <ProjectReference Include="FFmpegVideoPlayer.Core\FFmpegVideoPlayer.Core.csproj" />
+    <ProjectReference Include="FFmpegVideoPlayer.Audio.OpenTK\FFmpegVideoPlayer.Audio.OpenTK.csproj" />
   </ItemGroup>
 
   <!-- Include README and images in package -->

@@ -9,6 +9,7 @@ using Avalonia.Platform.Storage;
 using Avalonia.Threading;
 using FFmpegVideoPlayer.Core;
 using Path = Avalonia.Controls.Shapes.Path;
+using OpenTKAudioFactory = FFmpegVideoPlayer.Audio.OpenTK.AudioPlayerFactory;
 
 namespace Avalonia.FFmpegVideoPlayer;
 
@@ -691,9 +692,15 @@ public partial class VideoPlayerControl : UserControl
                 FFmpegInitializer.Initialize();
             }
 
+            // Use StyledProperty AudioPlayerFactory when set; otherwise default to OpenAL via OpenTK.
+            // Note: do not pass `AudioPlayerFactory` bare — that is the instance property and is null by default,
+            // which disabled all audio (video-only mode).
+            Func<int, int, IAudioPlayer?> effectiveAudioFactory = AudioPlayerFactory
+                ?? ((sr, ch) => OpenTKAudioFactory.Create(sr, ch));
+
             _mediaPlayer = new FFmpegMediaPlayer(
                 synchronizationCallback: action => Dispatcher.UIThread.Post(action),
-                audioPlayerFactory: AudioPlayerFactory);
+                audioPlayerFactory: effectiveAudioFactory);
 
             // Subscribe to media player events
             _mediaPlayer.PositionChanged += OnPositionChanged;

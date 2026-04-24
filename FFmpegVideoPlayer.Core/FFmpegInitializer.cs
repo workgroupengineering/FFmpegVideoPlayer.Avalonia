@@ -240,6 +240,29 @@ public static class FFmpegInitializer
                 }
             }
 
+            // Same treatment on Linux: try apt/dnf/pacman (needs sudo — succeeds on
+            // passwordless-sudo systems, otherwise fails cleanly with the exact command
+            // the user should run. See TryInstallFFmpegOnLinux for the rationale.)
+            if (string.IsNullOrEmpty(_ffmpegPath) && IsLinux && autoInstall)
+            {
+                Log("FFmpeg not found on Linux, attempting automatic installation via system package manager...");
+                StatusChanged?.Invoke("FFmpeg not found. Attempting install via system package manager…");
+
+                if (TryInstallFFmpegOnLinux())
+                {
+                    var discovered = FindFFmpegPath(null);
+                    if (!string.IsNullOrEmpty(discovered))
+                    {
+                        FFmpegPathResolver.ConfigureNativeSearchPath(discovered);
+                        if (FFmpegPathResolver.TryValidateBindings())
+                        {
+                            Log($"Using system-installed FFmpeg: {discovered}");
+                            _ffmpegPath = discovered;
+                        }
+                    }
+                }
+            }
+
             // Last-ditch: try whatever the default loader can find (OS-installed library in
             // the standard search path). This matches prior behavior when no path was set.
             if (string.IsNullOrEmpty(_ffmpegPath))
@@ -514,6 +537,112 @@ public static class FFmpegInitializer
         catch (Exception ex)
         {
             Log($"Exception during Homebrew installation: {ex.Message}");
+            return false;
+        }
+    }
+
+    /// <summary>
+    /// Attempts to install FFmpeg on Linux via the system package manager (apt, dnf, or pacman).
+    /// Unlike macOS/Homebrew, Linux package managers require root, so we prepend <c>sudo -n</c>
+    /// (non-interactive) when not already running as root. On systems with passwordless sudo
+    /// (CI, dev machines with NOPASSWD) the install succeeds silently; elsewhere it fails
+    /// cleanly and the initializer surfaces an error that tells the user the exact command
+    /// to run manually. We deliberately do not prompt for a password — popping up a hidden
+    /// sudo prompt from inside a desktop app is surprising and hard to notice.
+    /// </summary>
+    /// <returns>True if installation succeeded, false otherwise.</returns>
+    public static bool TryInstallFFmpegOnLinux()
+    {
+        if (!IsLinux)
+        {
+            Log("TryInstallFFmpegOnLinux called on non-Linux platform");
+            return false;
+        }
+
+        string? pkgManagerPath = null;
+        string installArgs;
+        string displayCommand;
+
+        if (File.Exists("/usr/bin/apt-get"))
+        {
+            pkgManagerPath = "/usr/bin/apt-get";
+            installArgs = "install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev";
+            displayCommand = "sudo apt install -y ffmpeg libavcodec-dev libavformat-dev libavutil-dev libswscale-dev libswresample-dev";
+        }
+        else if (File.Exists("/usr/bin/dnf"))
+        {
+            pkgManagerPath = "/usr/bin/dnf";
+            installArgs = "install -y ffmpeg ffmpeg-devel";
+            displayCommand = "sudo dnf install -y ffmpeg ffmpeg-devel";
+        }
+        else if (File.Exists("/usr/bin/pacman"))
+        {
+            pkgManagerPath = "/usr/bin/pacman";
+            installArgs = "-S --noconfirm ffmpeg";
+            displayCommand = "sudo pacman -S ffmpeg";
+        }
+        else
+        {
+            Log("No supported Linux package manager (apt-get/dnf/pacman) found in /usr/bin");
+            StatusChanged?.Invoke("No supported Linux package manager found. Install FFmpeg manually.");
+            return false;
+        }
+
+        var isRoot = string.Equals(Environment.UserName, "root", StringComparison.Ordinal);
+        Log($"Using {pkgManagerPath} to install FFmpeg (running as {(isRoot ? "root" : "non-root, will use sudo -n")})");
+        StatusChanged?.Invoke("Installing FFmpeg (this may take a few minutes)...");
+
+        try
+        {
+            var startInfo = new ProcessStartInfo
+            {
+                FileName = isRoot ? pkgManagerPath : "sudo",
+                Arguments = isRoot ? installArgs : $"-n {pkgManagerPath} {installArgs}",
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+            // DEBIAN_FRONTEND=noninteractive prevents apt from prompting about config files.
+            startInfo.Environment["DEBIAN_FRONTEND"] = "noninteractive";
+
+            using var process = Process.Start(startInfo);
+            if (process == null)
+            {
+                Log("Failed to start package manager process");
+                return false;
+            }
+
+            var output = process.StandardOutput.ReadToEnd();
+            var error = process.StandardError.ReadToEnd();
+            process.WaitForExit();
+
+            if (process.ExitCode == 0)
+            {
+                Log("FFmpeg installed successfully via system package manager");
+                StatusChanged?.Invoke("FFmpeg installed successfully!");
+                return true;
+            }
+
+            // Most common reason for failure on Linux is that passwordless sudo isn't
+            // configured. Surface the exact command so the user can run it themselves.
+            var stderr = error.ToLowerInvariant();
+            if (stderr.Contains("password is required") || stderr.Contains("a terminal is required") || stderr.Contains("sudo:"))
+            {
+                Log($"sudo requires a password (not available non-interactively). Run: {displayCommand}");
+                StatusChanged?.Invoke($"FFmpeg auto-install needs sudo. Run manually: {displayCommand}");
+            }
+            else
+            {
+                Log($"Package manager install failed (exit {process.ExitCode}): {error}");
+                StatusChanged?.Invoke($"FFmpeg install failed. Run manually: {displayCommand}");
+            }
+            return false;
+        }
+        catch (Exception ex)
+        {
+            Log($"Exception during Linux FFmpeg install: {ex.Message}");
+            StatusChanged?.Invoke($"FFmpeg install error: {ex.Message}. Run manually: {displayCommand}");
             return false;
         }
     }

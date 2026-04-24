@@ -164,12 +164,11 @@ VideoPlayer.IconProvider = new MyIconProvider();
 
 ## Platform Support
 
-| Platform | Bundled Binaries | Custom Binaries |
-|----------|------------------|-----------------|
-| Windows x64 | ✅ Optional | ✅ Supported |
-| macOS ARM64 | ⚠️ Not bundled (install via Homebrew; auto-install supported) | ✅ Supported |
-| macOS x64 | ⚠️ Not bundled (install via Homebrew; auto-install supported) | ✅ Supported (use custom path) |
-| Linux | ⚠️ Not bundled | ✅ Supported (use custom path) |
+| Platform | Bundled Binaries | System FFmpeg | Auto-install |
+|----------|------------------|---------------|--------------|
+| Windows x64 | ✅ Bundled | ✅ Supported | n/a |
+| macOS ARM64 / x64 | ⚠️ Not bundled | ✅ `/opt/homebrew/lib`, `/usr/local/lib`, Cellar | ✅ Homebrew (no sudo) |
+| Linux (apt / dnf / pacman) | ⚠️ Not bundled | ✅ `/usr/lib`, `/usr/local/lib`, arch-specific dirs | ✅ If passwordless sudo; otherwise prints exact install command |
 
 **Note**: Bundled binaries are optional. You can use your own FFmpeg installation by providing a `customPath` to `FFmpegInitializer.Initialize()`. This avoids conflicts with other libraries and reduces package size.
 

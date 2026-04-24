@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.0] - 2026-04-24
+
+### Added
+- **Linux auto-install** (issue #1). `FFmpegInitializer.Initialize()` now detects `apt-get`, `dnf`, or `pacman` under `/usr/bin` and attempts to install FFmpeg via the system package manager when `autoInstall: true` (the default). Uses `sudo -n` when not already running as root, so it succeeds silently on passwordless-sudo systems (CI, dev machines with NOPASSWD) and fails cleanly elsewhere with the exact command to run manually surfaced via `StatusChanged` and the thrown `FFmpegNotFoundException`. Matches the existing Homebrew flow on macOS so both macOS architectures and the three major Linux distro families "just work" on a fresh machine.
+
 ## [2.7.1] - 2026-04-24
 
 ### Fixed

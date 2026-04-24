@@ -12,8 +12,6 @@ namespace FFmpegVideoPlayer.Core;
 /// </summary>
 internal static class FFmpegPathResolver
 {
-    private static bool _bindingsInitialized;
-
     /// <summary>
     /// Tries to find a bundled FFmpeg path under runtimes/&lt;rid&gt;/native and, if found,
     /// configures the process search path so the native loader can locate dependencies.
@@ -91,27 +89,37 @@ internal static class FFmpegPathResolver
     }
 
     /// <summary>
-    /// Initializes the FFmpeg.AutoGen dynamic bindings.
-    /// Must be called after setting <see cref="ffmpeg.RootPath"/>.
+    /// Initializes (or re-initializes) the FFmpeg.AutoGen dynamic bindings.
+    /// Must be called after setting <see cref="ffmpeg.RootPath"/>. Safe to call multiple
+    /// times — each call re-resolves every function against the current RootPath.
     /// </summary>
     public static void InitializeBindings()
     {
-        if (_bindingsInitialized)
-            return;
+        // FFmpeg.AutoGen 8.x's DynamicallyLoadedBindings.Initialize is idempotent and
+        // re-probes every function, so we can call it again after the search path changes.
+        DynamicallyLoadedBindings.Initialize();
+#if DEBUG
+        Console.WriteLine($"[FFmpegPathResolver] Bindings initialized (RootPath: {ffmpeg.RootPath})");
+#endif
+    }
 
+    /// <summary>
+    /// Probes whether the currently-configured FFmpeg libraries actually loaded and
+    /// exported their functions. FFmpeg.AutoGen silently swallows dlopen/LoadLibrary
+    /// failures and replaces unresolved functions with stubs that throw
+    /// NotSupportedException at call time — so "bindings initialized" does not imply
+    /// "native library loaded". Calling a trivial function and checking for a non-zero
+    /// return is the cheapest reliable check.
+    /// </summary>
+    public static bool TryValidateBindings()
+    {
         try
         {
-            // FFmpeg.AutoGen 8.x uses DynamicallyLoadedBindings that must be initialized.
-            // This sets up lazy loading of all FFmpeg functions.
-            DynamicallyLoadedBindings.Initialize();
-            _bindingsInitialized = true;
-#if DEBUG
-            Console.WriteLine($"[FFmpegPathResolver] Bindings initialized (RootPath: {ffmpeg.RootPath})");
-#endif
+            return ffmpeg.avcodec_version() != 0;
         }
         catch
         {
-            throw;
+            return false;
         }
     }
 

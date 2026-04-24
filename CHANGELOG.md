@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.7.0] - 2026-04-24
+
+### Fixed
+- **macOS: "System.NotSupportedException: Specified method is not supported." when opening a file** (issue #2). The bundled `runtimes/osx-arm64/native/*.dylib` files had absolute `LC_LOAD_DYLIB` paths pointing at Homebrew-only locations (`/opt/homebrew/opt/<formula>/lib/...`), so `dlopen` silently failed on any Mac without the exact same formulae installed. FFmpeg.AutoGen then left every function as a `NotSupportedException`-throwing stub, and the failure only surfaced later inside `avformat_open_input`.
+- Bundled FFmpeg is now validated after configuration by calling `avcodec_version()`. If the probe returns 0 or throws, the candidate is treated as broken and the initializer falls through to system discovery / Homebrew autoinstall instead of silently continuing with unusable bindings.
+- Initialization now throws `FFmpegNotFoundException` up front when no candidate actually loaded, instead of reporting "initialized successfully" and crashing at the first FFmpeg call.
+
+### Removed
+- Stopped shipping `runtimes/osx-arm64/native/*.dylib` in the NuGet package. macOS users should `brew install ffmpeg` (the initializer can auto-install with `autoInstall: true`, which is the default), or supply their own binaries via `customPath`.
+
 ## [2.1.8] - 2025-12-26
 
 ### Fixed

@@ -140,6 +140,14 @@ public static class FFmpegInitializer
             // 1. Custom path (if provided) - highest priority to allow users to override bundled binaries
             // 2. Bundled binaries (if enabled and present in NuGet package)
             // 3. System discovery (application directory, PATH, platform-specific locations)
+            //
+            // After each candidate we probe the native library (via TryValidateBindings) because
+            // FFmpeg.AutoGen silently swallows load failures and replaces unresolved functions
+            // with stubs that throw NotSupportedException at call time. If the candidate path
+            // "configures" but avcodec_version() returns 0 / throws, the dylib didn't really
+            // load — usually because of missing transitive dependencies (e.g. Homebrew‑built
+            // macOS dylibs hardcoding /opt/homebrew/opt/... paths) — so we fall through to the
+            // next source instead of letting the user hit the crash at Open() time.
 
             if (!string.IsNullOrEmpty(customPath))
             {
@@ -147,8 +155,22 @@ public static class FFmpegInitializer
                 if (Directory.Exists(customPath) && FFmpegPathResolver.HasFFmpegLibrary(customPath))
                 {
                     Log($"Using custom FFmpeg path: {customPath}");
-                    _ffmpegPath = customPath;
-                    FFmpegPathResolver.ConfigureNativeSearchPath(_ffmpegPath);
+                    FFmpegPathResolver.ConfigureNativeSearchPath(customPath);
+                    if (FFmpegPathResolver.TryValidateBindings())
+                    {
+                        _ffmpegPath = customPath;
+                    }
+                    else
+                    {
+                        // Custom path was explicit — do not silently fall back. Surface the
+                        // failure so the user sees why their chosen install doesn't work.
+                        Log($"Custom FFmpeg path configured but libraries failed to load: {customPath}");
+                        throw new FFmpegNotFoundException(
+                            $"FFmpeg libraries at custom path '{customPath}' failed to load. " +
+                            $"The files are present but dlopen/LoadLibrary could not resolve their dependencies " +
+                            $"(common on macOS when dylibs hardcode Homebrew paths not present on this machine).\n" +
+                            GetInstallationInstructions());
+                    }
                 }
                 else
                 {
@@ -161,86 +183,95 @@ public static class FFmpegInitializer
             // Check bundled binaries only if no custom path was set and bundled binaries are enabled
             if (string.IsNullOrEmpty(_ffmpegPath) && useBundledBinaries)
             {
-                _ffmpegPath = FFmpegPathResolver.TryConfigureBundledFFmpeg();
-                if (!string.IsNullOrEmpty(_ffmpegPath))
+                var bundled = FFmpegPathResolver.TryConfigureBundledFFmpeg();
+                if (!string.IsNullOrEmpty(bundled))
                 {
-                    Log($"Using bundled FFmpeg binaries: {_ffmpegPath}");
+                    if (FFmpegPathResolver.TryValidateBindings())
+                    {
+                        Log($"Using bundled FFmpeg binaries: {bundled}");
+                        _ffmpegPath = bundled;
+                    }
+                    else
+                    {
+                        Log($"Bundled FFmpeg at '{bundled}' failed to load (likely missing transitive native dependencies). Falling back to system discovery.");
+                        StatusChanged?.Invoke("Bundled FFmpeg failed to load — searching system…");
+                    }
                 }
             }
 
-            // Fallback to system discovery only if no custom path was provided and no bundled binaries found
+            // Fallback to system discovery only if no custom path was provided and we don't
+            // already have a working FFmpeg path.
             if (string.IsNullOrEmpty(_ffmpegPath) && string.IsNullOrEmpty(customPath))
             {
-                _ffmpegPath = FindFFmpegPath(null);
+                var discovered = FindFFmpegPath(null);
+                if (!string.IsNullOrEmpty(discovered))
+                {
+                    FFmpegPathResolver.ConfigureNativeSearchPath(discovered);
+                    if (FFmpegPathResolver.TryValidateBindings())
+                    {
+                        Log($"Using system FFmpeg: {discovered}");
+                        _ffmpegPath = discovered;
+                    }
+                    else
+                    {
+                        Log($"System FFmpeg at '{discovered}' failed to load.");
+                    }
+                }
             }
 
-            // If not found on macOS and autoInstall is enabled, try to install via Homebrew
+            // If still not found on macOS and autoInstall is enabled, try to install via Homebrew
             if (string.IsNullOrEmpty(_ffmpegPath) && IsMacOS && autoInstall)
             {
                 Log("FFmpeg not found on macOS, attempting automatic installation via Homebrew...");
                 StatusChanged?.Invoke("FFmpeg not found. Installing via Homebrew (this may take a few minutes)...");
-                
+
                 if (TryInstallFFmpegOnMacOS())
                 {
-                    // Try to find FFmpeg again after installation
-                    _ffmpegPath = FindFFmpegPath(null);
+                    var discovered = FindFFmpegPath(null);
+                    if (!string.IsNullOrEmpty(discovered))
+                    {
+                        FFmpegPathResolver.ConfigureNativeSearchPath(discovered);
+                        if (FFmpegPathResolver.TryValidateBindings())
+                        {
+                            Log($"Using Homebrew-installed FFmpeg: {discovered}");
+                            _ffmpegPath = discovered;
+                        }
+                    }
                 }
             }
 
-            // Configure path if found via system discovery (custom and bundled paths already configured above)
-            bool pathAlreadyConfigured = false;
-            if (!string.IsNullOrEmpty(_ffmpegPath))
+            // Last-ditch: try whatever the default loader can find (OS-installed library in
+            // the standard search path). This matches prior behavior when no path was set.
+            if (string.IsNullOrEmpty(_ffmpegPath))
             {
-                Log($"Using FFmpeg from: {_ffmpegPath}");
-                
-                // Check if path was already configured (custom path or bundled binaries)
-                // TryConfigureBundledFFmpeg() calls ConfigureNativeSearchPath internally
-                // Custom path also calls ConfigureNativeSearchPath above
-                // So we only need to configure if found via system discovery
-                if (string.IsNullOrEmpty(customPath))
-                {
-                    // Check if this is a bundled path (already configured)
-                    var bundledPath = FFmpegPathResolver.FindBundledPath();
-                    if (useBundledBinaries && !string.IsNullOrEmpty(bundledPath) && 
-                        Path.GetFullPath(_ffmpegPath).Equals(Path.GetFullPath(bundledPath), StringComparison.OrdinalIgnoreCase))
-                    {
-                        pathAlreadyConfigured = true; // Bundled path already configured by TryConfigureBundledFFmpeg
-                    }
-                }
-                else
-                {
-                    pathAlreadyConfigured = true; // Custom path already configured above
-                }
-                
-                // Configure system-discovered path if not already configured
-                if (!pathAlreadyConfigured)
-                {
-                    FFmpegPathResolver.ConfigureNativeSearchPath(_ffmpegPath);
-                }
-                else
-                {
-                    // Just ensure bindings are initialized (path already configured)
-                    FFmpegPathResolver.InitializeBindings();
-                }
-            }
-            else
-            {
-                // No explicit path found, but we still need to initialize the bindings
-                // This will try to load from system default locations
                 FFmpegPathResolver.InitializeBindings();
             }
 
-            // Test FFmpeg by getting version info
+            // Final validation — compute and log the real version if we have one.
             string versionStr = "unknown";
+            uint codecVersion = 0;
             try
             {
-                // Call avcodec_version to trigger library loading and verify FFmpeg works
-                var codecVersion = ffmpeg.avcodec_version();
-                versionStr = $"{codecVersion >> 16}.{(codecVersion >> 8) & 0xFF}.{codecVersion & 0xFF}";
+                codecVersion = ffmpeg.avcodec_version();
+                if (codecVersion != 0)
+                {
+                    versionStr = $"{codecVersion >> 16}.{(codecVersion >> 8) & 0xFF}.{codecVersion & 0xFF}";
+                }
             }
             catch { }
-            Log($"FFmpeg libavcodec version: {versionStr}");
 
+            if (codecVersion == 0)
+            {
+                // Nothing we tried actually loaded. Fail loudly instead of reporting
+                // "initialized successfully" and crashing later in Open().
+                var msg = string.IsNullOrEmpty(_ffmpegPath)
+                    ? "FFmpeg libraries could not be located or loaded."
+                    : $"FFmpeg libraries at '{_ffmpegPath}' loaded but no functions resolved — the native library is likely incompatible or missing transitive dependencies.";
+                Log(msg);
+                throw new FFmpegNotFoundException(msg + "\n" + GetInstallationInstructions());
+            }
+
+            Log($"FFmpeg libavcodec version: {versionStr}");
             _isInitialized = true;
             StatusChanged?.Invoke($"FFmpeg initialized successfully (libavcodec: {versionStr})");
             return true;

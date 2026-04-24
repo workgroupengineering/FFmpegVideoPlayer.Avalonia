@@ -10,11 +10,11 @@
     <PackageId>FFmpegVideoPlayer.Avalonia</PackageId>
     <AssemblyName>Avalonia.FFmpegVideoPlayer</AssemblyName>
     <RootNamespace>Avalonia.FFmpegVideoPlayer</RootNamespace>
-    <Version>2.6.3</Version>
+    <Version>2.7.0</Version>
     <Authors>jojomondag</Authors>
     <Company>jojomondag</Company>
-    <Description>Self-contained FFmpeg video player for Avalonia UI. FFmpeg libraries bundled - no installation required.</Description>
-    <PackageReleaseNotes>v2.6.3: Same as 2.6.2 (OpenAL default audio). v2.6.2: Default OpenAL audio when AudioPlayerFactory unset. v2.3.0: Control panel styling. v2.2.0: DecodeFirstFrame().</PackageReleaseNotes>
+    <Description>FFmpeg video player for Avalonia UI. Windows FFmpeg binaries bundled; macOS users install via Homebrew (auto-install supported).</Description>
+    <PackageReleaseNotes>v2.7.0: Fix #2 — macOS NotSupportedException at avformat_open_input. Bundled osx-arm64 dylibs had hardcoded Homebrew paths and failed to load on other Macs; they are no longer shipped. Initializer now validates the native load and falls back (or fails loudly) instead of silently leaving unresolved stubs. v2.6.3: OpenAL default audio. v2.3.0: Control panel styling. v2.2.0: DecodeFirstFrame().</PackageReleaseNotes>
     <PackageTags>avalonia;ffmpeg;video;player;media;cross-platform;arm64;self-contained</PackageTags>
     <PackageLicenseExpression>MIT</PackageLicenseExpression>
     <PackageProjectUrl>https://github.com/jojomondag/FFmpegVideoPlayer.Avalonia</PackageProjectUrl>

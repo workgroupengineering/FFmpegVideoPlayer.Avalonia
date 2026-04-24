@@ -19,7 +19,7 @@ The core package works without any additional dependencies. Audio playback is op
 
 ### FFmpeg Binaries
 
-**By default**, the NuGet package includes FFmpeg binaries for Windows x64 and macOS ARM64. However, you can:
+**By default**, the NuGet package includes FFmpeg binaries for Windows x64. macOS and Linux users should install FFmpeg via their system package manager — on macOS the initializer will auto-install via Homebrew if `autoInstall` is left at its default (`true`). You can also:
 
 1. **Use your own FFmpeg binaries** (recommended to avoid conflicts):
    ```csharp
@@ -167,11 +167,13 @@ VideoPlayer.IconProvider = new MyIconProvider();
 | Platform | Bundled Binaries | Custom Binaries |
 |----------|------------------|-----------------|
 | Windows x64 | ✅ Optional | ✅ Supported |
-| macOS ARM64 | ✅ Optional | ✅ Supported |
-| macOS x64 | ⚠️ Not bundled | ✅ Supported (use custom path) |
+| macOS ARM64 | ⚠️ Not bundled (install via Homebrew; auto-install supported) | ✅ Supported |
+| macOS x64 | ⚠️ Not bundled (install via Homebrew; auto-install supported) | ✅ Supported (use custom path) |
 | Linux | ⚠️ Not bundled | ✅ Supported (use custom path) |
 
 **Note**: Bundled binaries are optional. You can use your own FFmpeg installation by providing a `customPath` to `FFmpegInitializer.Initialize()`. This avoids conflicts with other libraries and reduces package size.
+
+**Why macOS binaries are not bundled**: A dylib copied out of `/opt/homebrew/Cellar/ffmpeg/*/lib` has `LC_LOAD_DYLIB` entries hardcoded to paths like `/opt/homebrew/opt/<formula>/lib/...`. On any Mac without the exact same set of Homebrew formulae, `dlopen` fails silently — FFmpeg.AutoGen then replaces every FFmpeg function with a stub that throws `NotSupportedException: Specified method is not supported.` at call time (for example, when calling `avformat_open_input`). Rather than ship dylibs that only work on the author's machine, macOS users install FFmpeg via Homebrew (`brew install ffmpeg`); `FFmpegInitializer.Initialize()` will do this automatically with `autoInstall: true` (the default).
 
 ## License
 

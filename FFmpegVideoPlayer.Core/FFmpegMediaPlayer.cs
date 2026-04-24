@@ -90,6 +90,14 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
     private AVRational _audioTimeBase;
     private double _pauseStartTime; // When pause started (stopwatch time)
     private double _totalPauseTime; // Total accumulated pause time
+
+    // Frame-accurate seek: av_seek_frame with AVSEEK_FLAG_BACKWARD lands on a keyframe
+    // at-or-before the target, which can be several seconds earlier with long GOPs.
+    // When this is >= 0, decoded frames with pts < _seekTargetPts are consumed but not
+    // displayed/queued, so playback resumes at the exact position the user asked for.
+    // Cleared (set to -1) as soon as we see the first frame at or after the target.
+    private const double SeekTargetEpsilon = 0.001; // 1 ms tolerance
+    private double _seekTargetPts = -1;
     
     // Frame stepping
     private bool _stepMode; // True when in step mode (frame-by-frame)
@@ -490,8 +498,9 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
             _videoClock = 0;
             _totalPauseTime = 0;
             _pauseStartTime = 0;
+            _seekTargetPts = -1;
 
-            _logger.Log("FFmpegMediaPlayer", "MovieLoadingCompleted", new 
+            _logger.Log("FFmpegMediaPlayer", "MovieLoadingCompleted", new
             { 
                 Path = path,
                 Duration = _duration,
@@ -802,6 +811,7 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
             _videoClock = 0;
             _totalPauseTime = 0;
             _pauseStartTime = 0;
+            _seekTargetPts = -1;
 
             // Seek to beginning
             if (_formatContext != null)
@@ -826,14 +836,20 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
             if (_formatContext == null) return;
 
             var oldPosition = _position;
-            var targetTime = (long)(_duration * positionPercent * ffmpeg.AV_TIME_BASE);
+            var targetSec = _duration * positionPercent;
+            var targetTime = (long)(targetSec * ffmpeg.AV_TIME_BASE);
+
+            // av_seek_frame with AVSEEK_FLAG_BACKWARD lands on the nearest keyframe
+            // at or before targetTime. We then set _seekTargetPts so the decode loops
+            // drop frames between the keyframe and targetSec — that's what makes seeks
+            // land on the user's position instead of snapping to keyframe boundaries.
             ffmpeg.av_seek_frame(_formatContext, -1, targetTime, ffmpeg.AVSEEK_FLAG_BACKWARD);
-            
+
             if (_videoCodecContext != null)
                 ffmpeg.avcodec_flush_buffers(_videoCodecContext);
             if (_audioCodecContext != null)
                 ffmpeg.avcodec_flush_buffers(_audioCodecContext);
-            
+
             // Reset clocks for resynchronization after seek
             _startTime = 0;
             _playbackStartWallTime = 0;
@@ -843,17 +859,18 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
             _videoClock = 0;
             _totalPauseTime = 0;
             _pauseStartTime = 0;
-            _position = _duration * positionPercent;
-            
+            _position = targetSec;
+            _seekTargetPts = targetSec;
+
             // Stop and reset audio player to reset sample counter
             _audioPlayer?.Stop();
-            
-            _logger.Log("FFmpegMediaPlayer", "Seek", new 
-            { 
+
+            _logger.Log("FFmpegMediaPlayer", "Seek", new
+            {
                 PositionPercent = positionPercent,
                 OldPosition = oldPosition,
                 NewPosition = _position,
-                TargetTime = targetTime / (double)ffmpeg.AV_TIME_BASE
+                TargetTime = targetSec
             });
         }
     }
@@ -979,6 +996,7 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                             _audioClock = 0;
                             _lastFramePts = -1;
                             _needsResync = true;
+                            _seekTargetPts = -1;
 
                             _logger.Log("FFmpegMediaPlayer", "FirstFrameDecoded", new { Width = _videoWidth, Height = _videoHeight });
                             return true;
@@ -1017,6 +1035,24 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                 {
                     if (ffmpeg.avcodec_receive_frame(_videoCodecContext, _frame) >= 0)
                     {
+                        // After a paused seek, the first decodable frame is the keyframe
+                        // at-or-before the target. Keep draining until we reach the frame
+                        // the user actually asked for so the preview matches the slider.
+                        if (_seekTargetPts >= 0)
+                        {
+                            var pts = _frame->pts != ffmpeg.AV_NOPTS_VALUE ? _frame->pts : _frame->best_effort_timestamp;
+                            if (pts != ffmpeg.AV_NOPTS_VALUE)
+                            {
+                                var frameTime = pts * _videoTimeBase.num / (double)_videoTimeBase.den;
+                                if (frameTime + SeekTargetEpsilon < _seekTargetPts)
+                                {
+                                    ffmpeg.av_packet_unref(_packet);
+                                    continue;
+                                }
+                            }
+                            _seekTargetPts = -1;
+                        }
+
                         ProcessSingleFrame();
                         ffmpeg.av_packet_unref(_packet);
                         return true;
@@ -1200,10 +1236,13 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                 _needsResync = true;
                 _audioClock = 0;
                 _videoClock = 0;
-                
+                // StepBackward manages its own target via the decode-forward loop below,
+                // so make sure a pending Seek target can't interfere.
+                _seekTargetPts = -1;
+
                 // Stop audio
                 _audioPlayer?.Stop();
-                
+
                 // Decode forward from keyframe until we reach the frame before current position
                 // This handles the keyframe issue - we decode from the keyframe forward
                 var targetPts = targetTime / (double)ffmpeg.AV_TIME_BASE;
@@ -1371,6 +1410,7 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
             _position = 0;
             _needsResync = true;
             _lastFramePts = -1;
+            _seekTargetPts = -1;
 
             _audioPlayer?.Stop();
         }
@@ -1415,6 +1455,17 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                     continue;
 
                 frameTime = pts * _videoTimeBase.num / (double)_videoTimeBase.den;
+
+                // Frame-accurate seek: av_seek_frame landed on the keyframe at-or-before
+                // the requested position. Decode-drain everything between that keyframe and
+                // the user's target without posting frames or touching the timing anchors.
+                // Leave _needsResync alone so the first *displayed* frame is the timing origin.
+                if (_seekTargetPts >= 0)
+                {
+                    if (frameTime + SeekTargetEpsilon < _seekTargetPts)
+                        continue;
+                    _seekTargetPts = -1;
+                }
 
                 // After seek, reset timing so next frame re-initializes
                 if (_needsResync)
@@ -1563,24 +1614,30 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                 var samples = tempFrame->nb_samples;
                 var channels = _audioCodecContext->ch_layout.nb_channels;
                 var sampleRate = _audioCodecContext->sample_rate;
-                
+
                 // Get audio PTS and convert to seconds
                 var pts = tempFrame->pts != ffmpeg.AV_NOPTS_VALUE ? tempFrame->pts : tempFrame->best_effort_timestamp;
                 if (pts != ffmpeg.AV_NOPTS_VALUE)
                 {
                     var audioTime = pts * _audioTimeBase.num / (double)_audioTimeBase.den;
-                    
+
+                    // Frame-accurate seek: drop audio that belongs to the pre-target region
+                    // so the audio stream starts exactly where the user seeked to instead of
+                    // at the preceding keyframe. Video has its own matching guard.
+                    if (_seekTargetPts >= 0 && audioTime + SeekTargetEpsilon < _seekTargetPts)
+                        continue;
+
                     // Track audio clock
                     _audioClock = audioTime;
-                    
+
                     // Update audio start PTS on first frame or after seek
                     if (lastAudioPts == 0 || _needsResync)
                     {
                         lastAudioPts = audioTime;
                         _audioStartPts = audioTime; // Track when audio stream starts for sync
                         _needsResync = false;
-                        _logger.Log("FFmpegMediaPlayer", "FirstAudioFrame", new 
-                        { 
+                        _logger.Log("FFmpegMediaPlayer", "FirstAudioFrame", new
+                        {
                             AudioTime = audioTime,
                             PTS = pts,
                             Samples = samples,
@@ -1588,7 +1645,7 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
                             Channels = channels
                         });
                     }
-                    
+
                     // Audio is the master clock - let it play continuously without sync adjustments.
                     // Video timing is controlled separately in ProcessVideoPacket to stay in sync.
                 }
@@ -1783,6 +1840,7 @@ public sealed unsafe class FFmpegMediaPlayer : IDisposable
         _videoClock = 0;
         _totalPauseTime = 0;
         _pauseStartTime = 0;
+        _seekTargetPts = -1;
     }
 
     /// <summary>

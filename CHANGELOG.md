@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+- **Slider seeks now land on the exact requested position instead of snapping to keyframes** (issue #3). `av_seek_frame` with `AVSEEK_FLAG_BACKWARD` lands on the nearest keyframe at or before the target, which with typical 1–10 s GOPs meant the slider appeared to "stick" at keyframe boundaries. `Seek()` now records the actual requested time and `ProcessVideoPacket` / `ProcessAudioPacket` / `DecodeSingleFrame` decode-drain through frames between that keyframe and the target without displaying or queueing them. Playback resumes precisely where the user let go of the slider.
+
 ## [2.7.0] - 2026-04-24
 
 ### Fixed

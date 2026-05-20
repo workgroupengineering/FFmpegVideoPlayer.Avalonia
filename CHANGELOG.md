@@ -5,6 +5,11 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [2.8.1] - 2026-05-20
+
+### Fixed
+- **Avalonia 12.x runtime crash on control initialization** (issue #4). Rebuilt package XAML against Avalonia 12.0.1 to avoid `MissingMethodException` for `ReflectionBindingExtension.ProvideValue` when `VideoPlayerControl` is instantiated in Avalonia 12.x / .NET 10 apps.
+
 ## [2.8.0] - 2026-04-24
 
 ### Added

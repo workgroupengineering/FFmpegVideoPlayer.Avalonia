@@ -155,7 +155,7 @@ VideoPlayer.IconProvider = new MyIconProvider();
 ## Dependencies
 
 ### Required
-- **Avalonia** (11.3.6+) - UI framework
+- **Avalonia** (12.0.1+) - UI framework
 - **FFmpegVideoPlayer.Core** - Core player logic (included)
 
 ### Optional
